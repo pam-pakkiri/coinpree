@@ -170,40 +170,27 @@ const SignalRow = memo(
         </TableCell>
 
         <TableCell>
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <Badge
-                className={cn(
-                  "font-bold text-[10px] px-2 py-0.5 uppercase tracking-wide w-fit",
-                  isBuy
-                    ? "bg-[#0ecb81]/10 text-[#0ecb81] hover:bg-[#0ecb81]/20 border-[#0ecb81]/20"
-                    : isSell
-                      ? "bg-[#f6465d]/10 text-[#f6465d] hover:bg-[#f6465d]/20 border-[#f6465d]/20"
-                      : "bg-muted text-muted-foreground border-border",
-                )}
-              >
-                {isBuy ? "🟢 BUY" : isSell ? "🔴 SELL" : "⚪ NEUTRAL"}
-              </Badge>
-              {coin.candlesAgo !== undefined && (
-                <span className="text-[9px] text-muted-foreground font-medium">
-                  {coin.candlesAgo === 0
-                    ? "NOW"
-                    : `${coin.candlesAgo} candle${coin.candlesAgo > 1 ? "s" : ""} ago`}
-                </span>
+          <div className="flex flex-col gap-1.5 items-start text-left">
+            <Badge
+              className={cn(
+                "font-bold text-[10px] px-2 py-0.5 uppercase tracking-wide w-fit border-0 shadow-sm",
+                isBuy
+                  ? "bg-[#0ecb81]/15 text-[#0ecb81]"
+                  : isSell
+                    ? "bg-[#f6465d]/15 text-[#f6465d]"
+                    : "bg-muted text-muted-foreground border-border",
               )}
-            </div>
-            <span className="text-[12px] font-bold text-foreground">
-              {coin.signalName}
+            >
+              {isBuy ? "BUY" : isSell ? "SELL" : "NEUTRAL"}
+            </Badge>
+
+            <span className="text-[11px] font-bold text-foreground leading-tight">
+              {coin.signalName.replace(/\s*\(.*?\)/g, "")}
             </span>
-            {isFresh ? (
-              <span className="text-[11px] font-bold text-orange-500 flex items-center gap-1">
-                🔥 FRESH!
-              </span>
-            ) : (
-              <span className="text-[10px] text-muted-foreground font-mono">
-                {crossoverTime}
-              </span>
-            )}
+
+            <span className="text-[10px] text-muted-foreground font-mono bg-muted/50 px-1.5 py-0.5 rounded">
+              {crossoverTime}
+            </span>
           </div>
         </TableCell>
 
@@ -239,99 +226,33 @@ const SignalRow = memo(
                   maximumFractionDigits: 2,
                 })}
             </span>
-            <div className="flex gap-2 text-[11px]">
-              <TooltipProvider delayDuration={100}>
-                <Tooltip>
-                  <TooltipTrigger>
-                    <FormatPercent val={coin.change1h} />
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="text-[10px] font-bold">
-                    1h Change
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
           </div>
         </TableCell>
 
         <TableCell className="text-right">
-          <div className="flex flex-col items-end gap-1">
-            <FormatPercent val={coin.change24h} />
-            <span className="text-[10px] text-muted-foreground font-medium">
-              24h
-            </span>
-          </div>
+          <FormatPercent val={coin.change24h} />
         </TableCell>
 
         <TableCell className="text-right">
-          <div className="flex flex-col items-end gap-1">
-            <FormatPercent val={coin.change7d} />
-            <span className="text-[10px] text-muted-foreground font-medium">
-              7d
-            </span>
-          </div>
+          <FormatPercent val={coin.change7d} />
         </TableCell>
 
         <TableCell className="text-right">
-          <div className="flex flex-col items-end gap-1">
-            <span className="text-[13px] font-bold text-foreground tabular-nums">
-              ${coin.volume24h ? (coin.volume24h / 1e6).toFixed(2) : "0.00"}M
-            </span>
-            <span className="text-[10px] text-muted-foreground font-medium">
-              Volume
-            </span>
-          </div>
+          <span className="text-[13px] font-bold text-foreground tabular-nums">
+            ${coin.volume24h ? (coin.volume24h / 1e6).toFixed(2) : "0.00"}M
+          </span>
         </TableCell>
 
         <TableCell className="text-right">
-          <div className="flex flex-col items-end gap-1">
-            <span className="text-[13px] font-bold text-foreground tabular-nums">
-              ${coin.marketCap ? (coin.marketCap / 1e9).toFixed(2) : "0.00"}B
-            </span>
-            <span className="text-[10px] text-muted-foreground font-medium">
-              MCap
-            </span>
-          </div>
+          <span className="text-[13px] font-bold text-foreground tabular-nums">
+            ${coin.marketCap ? (coin.marketCap / 1e9).toFixed(2) : "0.00"}B
+          </span>
         </TableCell>
 
         <TableCell className="text-right">
-          <div className="flex flex-col items-end gap-1">
-            <span className="text-[13px] font-bold text-orange-500 tabular-nums">
-              {coin.volatility.toFixed(2)}%
-            </span>
-            <span className="text-[10px] text-muted-foreground font-medium">
-              Vol
-            </span>
-          </div>
-        </TableCell>
-
-        <TableCell className="text-right">
-          <TooltipProvider delayDuration={100}>
-            <Tooltip>
-              <TooltipTrigger>
-                <div className="flex flex-col items-end gap-0.5">
-                  <span className="text-[11px] font-mono text-primary font-bold">
-                    EMA7: {coin.ema7?.toFixed(4) || "N/A"}
-                  </span>
-                  <span className="text-[11px] font-mono text-muted-foreground font-bold">
-                    EMA99: {coin.ema99?.toFixed(4) || "N/A"}
-                  </span>
-                  <span className="text-[10px] font-mono text-orange-500 font-bold">
-                    Gap: {coin.crossoverStrength?.toFixed(2) || "0"}%
-                  </span>
-                </div>
-              </TooltipTrigger>
-              <TooltipContent
-                side="left"
-                className="text-[11px] font-mono max-w-xs"
-              >
-                <div className="space-y-1">
-                  <p className="font-bold">MA Crossover Formula:</p>
-                  <p className="text-muted-foreground">{coin.formula}</p>
-                </div>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <span className="text-[13px] font-bold text-orange-500 tabular-nums">
+            {coin.volatility.toFixed(2)}%
+          </span>
         </TableCell>
       </TableRow>
     );
@@ -469,31 +390,40 @@ function SignalsTerminal({
     const checkAndResetHistory = () => {
       try {
         const lastReset = localStorage.getItem('coinpree_last_reset');
+
+        // Get current time in IST
         const now = new Date();
+        const istDate = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
 
-        // Convert to IST (UTC+5:30)
-        const istOffset = 5.5 * 60 * 60 * 1000;
-        const istNow = new Date(now.getTime() + istOffset);
-
-        // Today's reset time (5:30 AM IST)
-        const todayReset = new Date(istNow);
+        // Calculate reset time for TODAY (5:30 AM IST)
+        const todayReset = new Date(istDate);
         todayReset.setHours(5, 30, 0, 0);
+
+        // If current time is BEFORE 5:30 AM, the reset time was yesterday 5:30 AM
+        // behave as if the "trading day" started yesterday at 5:30
+        if (istDate < todayReset) {
+          todayReset.setDate(todayReset.getDate() - 1);
+        }
 
         // Check if we need to reset
         if (lastReset) {
-          const lastResetDate = new Date(parseInt(lastReset));
-          const lastResetIST = new Date(lastResetDate.getTime() + istOffset);
+          const lastResetTimestamp = parseInt(lastReset);
+          // Convert last reset timestamp to IST Date for comparison
+          const lastResetDate = new Date(lastResetTimestamp);
+          const lastResetDateIST = new Date(lastResetDate.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
 
-          // If current time is past 5:30 AM and last reset was before today's 5:30 AM
-          if (istNow >= todayReset && lastResetIST < todayReset) {
+          // If the last reset was BEFORE the current trading day's start time, we must reset
+          if (lastResetDateIST < todayReset) {
             console.log('🔄 Daily reset at 5:30 AM IST - Clearing signal history');
             localStorage.removeItem('coinpree_signal_history');
-            localStorage.setItem('coinpree_last_reset', Date.now().toString());
+            localStorage.setItem('coinpree_last_reset', now.getTime().toString());
             setSignalHistory(new Map());
+            // Optionally clear current displayed signals if desired, or let them stay until refresh
+            // setSignals([]); 
           }
         } else {
           // First time - set last reset to now
-          localStorage.setItem('coinpree_last_reset', Date.now().toString());
+          localStorage.setItem('coinpree_last_reset', now.getTime().toString());
         }
       } catch (error) {
         console.warn('Error checking reset:', error);
@@ -505,7 +435,7 @@ function SignalsTerminal({
       const stored = localStorage.getItem('coinpree_signal_history');
       if (stored) {
         const parsed = JSON.parse(stored);
-        const historyMap = new Map(Object.entries(parsed));
+        const historyMap = new Map<string, number>(Object.entries(parsed));
         setSignalHistory(historyMap);
       }
     } catch (error) {
@@ -515,8 +445,8 @@ function SignalsTerminal({
     // Check reset on mount
     checkAndResetHistory();
 
-    // Check every hour for reset
-    const interval = setInterval(checkAndResetHistory, 60 * 60 * 1000);
+    // Check every minute for reset
+    const interval = setInterval(checkAndResetHistory, 60 * 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -539,18 +469,21 @@ function SignalsTerminal({
 
       setSignals((prevSignals) => {
         if (isInitialLoad) {
-          // Initial load: replace all
+          // Initial load: keep existing if any? No, replace for now or maybe merge?
+          // If we want to keep "all appeared today", we should merge.
+          // But on initial load (page refresh), we don't have prevSignals.
           return newData;
         }
 
-        // Incremental update: only add NEW signals
-        const existingIds = new Set(
-          prevSignals.map((s) => `${s.coinId}-${s.signalType}-${s.candlesAgo}`)
+        // Incremental update: prevent duplicates based on Event ID (Coin + Signal + Time)
+        // We use crossoverTimestamp to identify the specific event instance.
+        const existingEventIds = new Set(
+          prevSignals.map((s) => `${s.coinId}-${s.signalType}-${s.crossoverTimestamp}`)
         );
 
         const truelyNewSignals = newData.filter(
           (newSig) =>
-            !existingIds.has(`${newSig.coinId}-${newSig.signalType}-${newSig.candlesAgo}`)
+            !existingEventIds.has(`${newSig.coinId}-${newSig.signalType}-${newSig.crossoverTimestamp}`)
         );
 
         if (truelyNewSignals.length > 0) {
@@ -565,9 +498,8 @@ function SignalsTerminal({
             const newHistory = new Map(prevHistory);
             truelyNewSignals.forEach((sig) => {
               const key = `${sig.coinId}-${sig.signalType}`;
-              if (!newHistory.has(key)) {
-                newHistory.set(key, Date.now());
-              }
+              // Update strictly if newer
+              newHistory.set(key, Date.now());
             });
 
             // Save to localStorage
@@ -587,10 +519,11 @@ function SignalsTerminal({
           }, 5000);
 
           // Add new signals to the TOP (most recent first)
+          // We keep ALL previous signals, even if they are old now.
           return [...truelyNewSignals, ...prevSignals];
         }
 
-        // No new signals, return existing
+        // No new signals, return existing list to preserve history
         return prevSignals;
       });
 
@@ -638,23 +571,23 @@ function SignalsTerminal({
   return (
     <div className="space-y-6">
       <div className="space-y-1">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 md:gap-0">
           <div>
-            <h1 className="text-3xl font-black text-foreground tracking-tighter uppercase">
+            <h1 className="text-lg md:text-3xl font-black text-foreground tracking-tighter uppercase leading-tight">
               {title}
             </h1>
-            <p className="text-[12px] font-bold text-muted-foreground uppercase opacity-80">
+            <p className="text-[10px] md:text-[12px] font-bold text-muted-foreground uppercase opacity-80">
               {description}
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="flex bg-muted rounded-lg p-1 border border-border">
+          <div className="flex items-center gap-2 w-full md:w-auto overflow-x-auto pb-2 md:pb-0 no-scrollbar">
+            <div className="flex bg-muted rounded-lg p-1 border border-border shrink-0">
               {["5m", "15m", "30m", "1h", "4h", "1d"].map((tf) => (
                 <button
                   key={tf}
                   onClick={() => setTimeframe(tf)}
                   className={cn(
-                    "px-3 py-1 text-[11px] font-bold rounded-md transition-all",
+                    "px-3 py-1 text-[11px] font-bold rounded-md transition-all whitespace-nowrap",
                     timeframe === tf
                       ? "bg-background text-primary shadow-sm"
                       : "text-muted-foreground hover:text-foreground",
@@ -665,19 +598,19 @@ function SignalsTerminal({
               ))}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               {refreshing ? (
                 <>
                   <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-                  <span className="text-[11px] text-muted-foreground font-medium">
-                    Checking for new signals...
+                  <span className="text-[11px] text-muted-foreground font-medium hidden sm:inline">
+                    Updating...
                   </span>
                 </>
               ) : (
                 <>
                   <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-                  <span className="text-[11px] text-muted-foreground font-medium">
-                    Live • Updated: {lastUpdate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  <span className="text-[11px] text-muted-foreground font-medium hidden sm:inline">
+                    Live
                   </span>
                 </>
               )}
@@ -687,7 +620,7 @@ function SignalsTerminal({
               size="sm"
               onClick={handleRefresh}
               disabled={refreshing}
-              className="h-8 gap-2"
+              className="h-8 gap-2 shrink-0"
             >
               <RefreshCw
                 size={14}
@@ -696,9 +629,118 @@ function SignalsTerminal({
             </Button>
           </div>
         </div>
+
+        {/* Mobile Stats Grid (4 Columns as requested) */}
+        <div className="grid grid-cols-2 gap-3 md:hidden">
+          {/* Buy Signals */}
+          <div className="bg-card border border-border rounded-xl p-4 flex flex-col justify-between h-28 relative overflow-hidden">
+            <div className="absolute top-2 right-2 opacity-10">
+              <TrendingUp size={40} className="text-[#0ecb81]" />
+            </div>
+            <div className="flex items-start">
+              <TrendingUp size={16} className="text-[#0ecb81]" />
+            </div>
+            <div>
+              <span className="text-3xl font-black text-[#0ecb81] tabular-nums tracking-tight">
+                {signals.filter(s => s.signalType === 'BUY').length}
+              </span>
+              <p className="text-[10px] font-bold text-muted-foreground uppercase leading-none mt-1">
+                Buy Signals Detected
+              </p>
+            </div>
+          </div>
+
+          {/* Bullish Sentiment / Placeholder */}
+          <div className="bg-card border border-border rounded-xl p-4 flex flex-col justify-between h-28 relative overflow-hidden">
+            <div className="absolute top-2 right-2">
+              <Badge className="bg-[#0ecb81]/20 text-[#0ecb81] hover:bg-[#0ecb81]/20 border-0 font-bold text-[9px] px-2">BULLISH</Badge>
+            </div>
+            <div className="mt-auto">
+              {/* Placeholder content or stats */}
+              <span className="text-[10px] font-bold text-muted-foreground uppercase leading-none block">
+                Market Sentiment
+              </span>
+            </div>
+          </div>
+
+          {/* Sell Signals */}
+          <div className="bg-card border border-border rounded-xl p-4 flex flex-col justify-between h-28 relative overflow-hidden">
+            <div className="absolute top-2 right-2 opacity-10">
+              <TrendingDown size={40} className="text-[#f6465d]" />
+            </div>
+            <div className="flex items-start">
+              <TrendingDown size={16} className="text-[#f6465d]" />
+            </div>
+            <div>
+              <span className="text-3xl font-black text-[#f6465d] tabular-nums tracking-tight">
+                {signals.filter(s => s.signalType === 'SELL').length}
+              </span>
+              <p className="text-[10px] font-bold text-muted-foreground uppercase leading-none mt-1">
+                Sell Signals Detected
+              </p>
+            </div>
+          </div>
+
+          {/* Bearish Sentiment / Placeholder */}
+          <div className="bg-card border border-border rounded-xl p-4 flex flex-col justify-between h-28 relative overflow-hidden">
+            <div className="absolute top-2 right-2">
+              <Badge className="bg-[#f6465d]/20 text-[#f6465d] hover:bg-[#f6465d]/20 border-0 font-bold text-[9px] px-2">BEARISH</Badge>
+            </div>
+            <div className="mt-auto">
+              {/* Placeholder content or stats */}
+              <span className="text-[10px] font-bold text-muted-foreground uppercase leading-none block">
+                Market Sentiment
+              </span>
+            </div>
+          </div>
+
+          {/* Avg Score */}
+          <div className="bg-card border border-border rounded-xl p-4 flex flex-col justify-between h-28 relative overflow-hidden">
+            <div className="absolute top-2 right-2">
+              <Calculator size={40} className="text-primary opacity-10" />
+            </div>
+            <div className="flex items-start">
+              <Calculator size={16} className="text-primary" />
+            </div>
+            <div>
+              <span className="text-3xl font-black text-primary tabular-nums tracking-tight">
+                {Math.round(signals.reduce((acc, curr) => acc + curr.score, 0) / (signals.length || 1))}
+              </span>
+              <p className="text-[10px] font-bold text-muted-foreground uppercase leading-none mt-1">
+                Avg Signal Score
+              </p>
+            </div>
+          </div>
+
+          {/* Top Performer */}
+          <div className="bg-card border border-border rounded-xl p-4 flex flex-col justify-between h-28 relative overflow-hidden">
+            <div className="absolute top-2 right-2">
+              <Trophy size={40} className="text-orange-500 opacity-10" />
+            </div>
+            <div className="flex items-start">
+              <Trophy size={16} className="text-orange-500" />
+            </div>
+            <div>
+              {signals.length > 0 ? (
+                <>
+                  <span className="text-3xl font-black text-orange-500 tabular-nums tracking-tight uppercase">
+                    {signals[0].symbol.slice(0, 3)}
+                  </span>
+                  <p className="text-[10px] font-bold text-muted-foreground uppercase leading-none mt-1">
+                    {(signals[0].change24h > 0 ? "+" : "") + signals[0].change24h.toFixed(2)}%
+                  </p>
+                </>
+              ) : (
+                <span className="text-xl font-bold text-muted-foreground">--</span>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
 
-      <BentoHeader signals={signals} />
+      <div className="hidden md:block">
+        <BentoHeader signals={signals} />
+      </div>
 
       <div className="gecko-card flex flex-col md:flex-row items-center justify-between p-3 gap-4">
         <div className="flex items-center gap-2">
@@ -773,12 +815,105 @@ function SignalsTerminal({
           </div>
         ) : (
           <>
-            <div className="overflow-x-auto">
+            {/* Mobile View: Cards */}
+            <div className="md:hidden space-y-3">
+              {currentItems.map((coin) => {
+                const signalKey = `${coin.coinId}-${coin.timestamp}`;
+                const isNew = newSignalIds.has(signalKey);
+                // Smart time display
+                const timeSinceCrossover = Date.now() - (coin.crossoverTimestamp || coin.timestamp || Date.now());
+                const isFresh = timeSinceCrossover < 5 * 60 * 1000;
+
+                return (
+                  <div
+                    key={signalKey}
+                    className={cn(
+                      "gecko-card p-4 flex flex-col gap-3",
+                      isNew && "animate-pulse border-primary/50 bg-primary/5"
+                    )}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-muted flex-shrink-0 flex items-center justify-center overflow-hidden border border-border">
+                          {coin.image || coin.fullData?.image ? (
+                            <img
+                              src={coin.image || coin.fullData?.image}
+                              alt={coin.symbol}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <span className="text-[12px] font-bold text-muted-foreground">{coin.symbol.slice(0, 2)}</span>
+                          )}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-base text-foreground">{coin.symbol}</span>
+                            <Badge variant="outline" className="text-[10px] h-5 px-1.5 font-bold border-border/50">#{coin.score}</Badge>
+                          </div>
+                          <span className="text-[11px] text-muted-foreground font-medium">{coin.name || coin.fullData?.name}</span>
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end">
+                        <span className="text-[15px] font-bold text-foreground">
+                          ${coin.currentPrice < 1 ? coin.currentPrice.toFixed(6) : coin.currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                        <FormatPercent val={coin.change24h} />
+                      </div>
+                    </div>
+
+                    <div className="bg-muted/30 rounded-lg p-3 grid grid-cols-2 gap-4 border border-border/50">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[10px] text-muted-foreground font-bold uppercase">Signal Type</span>
+                        <Badge
+                          className={cn(
+                            "font-bold text-[11px] px-2 py-1 uppercase tracking-wide w-fit",
+                            coin.signalType === "BUY"
+                              ? "bg-[#0ecb81]/10 text-[#0ecb81] border-[#0ecb81]/20"
+                              : "bg-[#f6465d]/10 text-[#f6465d] border-[#f6465d]/20"
+                          )}
+                        >
+                          {coin.signalType === "BUY" ? "🟢 BUY" : "🔴 SELL"}
+                        </Badge>
+                      </div>
+                      <div className="flex flex-col gap-1 items-end">
+                        <span className="text-[10px] text-muted-foreground font-bold uppercase">Detected</span>
+                        <div className="flex items-center gap-1.5">
+                          <Badge variant="outline" className="text-[10px] font-mono font-bold text-foreground border-border/50 bg-background/50">
+                            {new Date(coin.crossoverTimestamp || coin.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </Badge>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground font-medium">
+                          {coin.candlesAgo === 0 ? "Just now" : `${coin.candlesAgo} candles ago`}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 pt-1">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] text-muted-foreground font-medium">Volume</span>
+                        <span className="text-[11px] font-bold text-foreground">${coin.volume24h ? (coin.volume24h / 1e6).toFixed(1) : "0.0"}M</span>
+                      </div>
+                      <div className="flex flex-col text-center">
+                        <span className="text-[10px] text-muted-foreground font-medium">Volatility</span>
+                        <span className="text-[11px] font-bold text-orange-500">{coin.volatility.toFixed(2)}%</span>
+                      </div>
+                      <div className="flex flex-col text-right">
+                        <span className="text-[10px] text-muted-foreground font-medium">Score</span>
+                        <span className="text-[11px] font-bold text-primary">{coin.score}/100</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Desktop View: Table */}
+            <div className="hidden md:block overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow className="gecko-table-header">
                     <TableHead className="w-10 text-center">#</TableHead>
-                    <TableHead className="min-w-[280px]">Coin</TableHead>
+                    <TableHead className="w-[180px]">Coin</TableHead>
                     <TableHead>Signal & Timing</TableHead>
                     <TableHead>Score</TableHead>
                     <TableHead className="text-right">Price</TableHead>
@@ -787,7 +922,7 @@ function SignalsTerminal({
                     <TableHead className="text-right">Volume</TableHead>
                     <TableHead className="text-right">Market Cap</TableHead>
                     <TableHead className="text-right">Volatility</TableHead>
-                    <TableHead className="text-right">MA Formula</TableHead>
+
                   </TableRow>
                 </TableHeader>
                 <TableBody>

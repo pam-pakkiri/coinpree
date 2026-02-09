@@ -19,8 +19,8 @@ export const metadata: Metadata = {
     default: "Coinpree | Institutional Crypto Audit & Signals Terminal",
     template: "%s | Coinpree Terminal"
   },
-  description: "Coinpree provides advanced algorithmic detection, MA Crossover signals, and institutional accumulation tracking for crypto assets.",
-  keywords: ["crypto terminal", "institutional signals", "MA crossover", "crypto audit", "smart money tracker", "bitcoin alpha"],
+  description: "Coinpree provides advanced algorithmic detection, Algo signals, and institutional accumulation tracking for crypto assets.",
+  keywords: ["crypto terminal", "institutional signals", "Algo Terminal", "crypto audit", "smart money tracker", "bitcoin alpha"],
   authors: [{ name: "Coinpree Labs" }],
   openGraph: {
     type: "website",

@@ -1,4 +1,4 @@
-import { MASignal, getBinanceCoinMapping } from "./coingecko";
+import { MASignal, getBinanceCoinMapping, calculateEMAArray, detectCrossover } from "./coingecko";
 
 const BINANCE_FAPI_BASE = "https://fapi.binance.com/fapi/v1";
 
@@ -187,39 +187,59 @@ export async function getBinanceFuturesSignals(
           const prices = closes;
           const currentPrice = prices[prices.length - 1];
 
-          // Calculate EMAs
-          const ema7 = calculateEMA(prices, 7);
-          const ema99 = calculateEMA(prices, 99);
+          // Calculate EMA Arrays
+          const ema7Array = calculateEMAArray(prices, 7);
+          const ema99Array = calculateEMAArray(prices, 99);
+
+          if (ema7Array.length < 100 || ema99Array.length < 100) return null;
 
           // Calculate RSI
           const rsi = calculateRSI(prices, 14);
 
-          // Calculate previous EMAs for crossover detection
-          const pricesPrev = prices.slice(0, -1);
-          const ema7Prev = calculateEMA(pricesPrev, 7);
-          const ema99Prev = calculateEMA(pricesPrev, 99);
+          // Determine lookback (24h)
+          let lookback = 288; // Default 5m
+          if (timeframe === "15m") lookback = 96;
+          if (timeframe === "30m") lookback = 48;
+          if (timeframe === "1h") lookback = 24;
+          if (timeframe === "4h") lookback = 6;
+          if (timeframe === "1d") lookback = 2;
 
-          // Determine Signal
-          let signalType: "BUY" | "SELL" | "NEUTRAL" = "NEUTRAL";
-          let signalName = "No Signal";
-          let crossoverStrength = 0;
+          // Detect Crossover
+          const crossover = detectCrossover(ema7Array, ema99Array, lookback);
 
-          // Golden Cross (Strict Freshness: Must have crossed in the LAST candle)
-          if (ema7 > ema99 && ema7Prev <= ema99Prev) {
-            signalType = "BUY";
-            signalName = `Golden Cross (Fresh)`;
-            crossoverStrength = ((ema7 - ema99) / ema99) * 100;
+          // Skip if no crossover found in window
+          if (!crossover.type) return null;
+
+          const signalType: "BUY" | "SELL" = crossover.type;
+
+          // Construct Signal Name
+          let signalName = "";
+          if (signalType === "BUY") {
+            signalName = crossover.candlesAgo === 0
+              ? "Golden Cross (Fresh)"
+              : `Golden Cross (${crossover.candlesAgo} candle${crossover.candlesAgo > 1 ? "s" : ""} ago)`;
+          } else {
+            signalName = crossover.candlesAgo === 0
+              ? "Death Cross (Fresh)"
+              : `Death Cross (${crossover.candlesAgo} candle${crossover.candlesAgo > 1 ? "s" : ""} ago)`;
           }
-          // Death Cross (Strict Freshness)
-          else if (ema7 < ema99 && ema7Prev >= ema99Prev) {
-            signalType = "SELL";
-            signalName = `Death Cross (Fresh)`;
+
+          // Crossover Strength
+          const ema7 = crossover.ema7At;
+          const ema99 = crossover.ema99At;
+          const ema7Prev = crossover.ema7Prev;
+          const ema99Prev = crossover.ema99Prev;
+
+          let crossoverStrength = 0;
+          if (signalType === "BUY") {
+            crossoverStrength = ((ema7 - ema99) / ema99) * 100;
+          } else {
             crossoverStrength = ((ema99 - ema7) / ema99) * 100;
           }
 
           // NO TREND SIGNALS - User requested ONLY fresh crossovers.
 
-          if (signalType === "NEUTRAL") return null;
+
 
           const volatility = calculateVolatility(prices);
           // Calculate entry, stop loss, and take profit based on signal type
@@ -260,6 +280,20 @@ export async function getBinanceFuturesSignals(
           // Cap score
           score = Math.min(Math.max(Math.round(score), 0), 100);
 
+          // Calculate accurate crossover timestamp
+          // timestamp = now - (candlesAgo * interval_in_ms)
+          // interval map: 5m=300000, 15m=900000, etc.
+          const intervalMsMap: { [key: string]: number } = {
+            "5m": 5 * 60 * 1000,
+            "15m": 15 * 60 * 1000,
+            "30m": 30 * 60 * 1000,
+            "1h": 60 * 60 * 1000,
+            "4h": 4 * 60 * 60 * 1000,
+            "1d": 24 * 60 * 60 * 1000,
+          };
+          const intervalMs = intervalMsMap[timeframe] || 3600000;
+          const crossoverTimestamp = Date.now() - (crossover.candlesAgo * intervalMs);
+
           return {
             coinId: pair.symbol,
             symbol: pair.symbol.replace("USDT", ""),
@@ -277,8 +311,8 @@ export async function getBinanceFuturesSignals(
             volume24h: parseFloat(pair.quoteVolume),
             marketCap: 0,
             timestamp: Date.now(),
-            crossoverTimestamp: Date.now(),
-            candlesAgo: 0,
+            crossoverTimestamp,
+            candlesAgo: crossover.candlesAgo,
             entryPrice,
             stopLoss,
             takeProfit,
@@ -307,7 +341,8 @@ export async function getBinanceFuturesSignals(
     const validSignals = results.filter((s): s is MASignal => s !== null);
 
     // Sort
-    validSignals.sort((a, b) => b.score - a.score);
+    // Sort by Time (Newest First) as requested
+    validSignals.sort((a, b) => b.crossoverTimestamp - a.crossoverTimestamp);
 
     console.log(`✅ Found ${validSignals.length} Binance Futures signals (${validSignals.filter(s => s.signalType === 'BUY').length} BUY, ${validSignals.filter(s => s.signalType === 'SELL').length} SELL)`);
 

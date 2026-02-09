@@ -116,18 +116,32 @@
   @apply bg-primary/10 text-primary;
 }
 
-/* Custom Scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* Custom Scrollbar - Desktop */
+@media (min-width: 768px) {
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border rounded-full hover:bg-muted-foreground/30 transition-colors;
+  }
 }
 
-::-webkit-scrollbar-track {
-  @apply bg-transparent;
+/* No Scrollbar Utility for Mobile Horizontal Scrolling */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
 }
 
-::-webkit-scrollbar-thumb {
-  @apply bg-border rounded-full hover:bg-muted-foreground/30 transition-colors;
+/* Safe Area Utilities for Mobile */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 20px);
 }
 
 @theme inline {
@@ -143,8 +157,6 @@
   100% {
     transform: translateX(-50%);
   }
-
-  /* Move -50% because we duplicated the list */
 }
 
 .animate-ticker {

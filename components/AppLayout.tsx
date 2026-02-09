@@ -4,7 +4,6 @@ import * as React from "react";
 import { useTheme } from "next-themes";
 import {
   Zap,
-  Search,
   Sun,
   Moon,
   Settings,
@@ -53,7 +52,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               Coinpree
             </span>
             <span className="text-[9px] font-bold text-[var(--header-subtext)] uppercase tracking-widest">
-              MA Crossover Terminal
+              Algo Terminal
             </span>
           </div>
         </div>
@@ -62,7 +61,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="h-8 w-px bg-border mx-6" />
 
         {/* Navigation */}
-        <div className="flex items-center gap-1 mr-6">
+        <div className="hidden md:flex items-center gap-1 mr-6">
           <Link href="/">
             <Button
               variant={pathname === "/" ? "secondary" : "ghost"}
@@ -73,7 +72,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
-              Derivatives (CG)
+              Derivatives (CG) - All
             </Button>
           </Link>
           <Link href="/binance-futures">
@@ -86,22 +85,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
-              Futures Market
+              Binance Futures
             </Button>
           </Link>
         </div>
 
         {/* Search */}
-        <div className="relative w-full max-w-[400px]">
-          <Search
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--header-subtext)]"
-            size={15}
-          />
-          <input
-            placeholder="Search coins, symbols..."
-            className="bg-[var(--header-search-bg)] border border-transparent rounded-lg h-9 w-full pl-9 pr-4 text-[13px] outline-none focus:border-primary/50 text-[var(--header-text)] font-medium transition-all placeholder:text-[var(--header-subtext)]"
-          />
-        </div>
+
 
         <div className="flex-1" />
 
@@ -134,18 +124,53 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col overflow-hidden bg-background">
           {/* Content Viewport */}
-          <main className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 bg-background scroll-smooth">
+          <main className="flex-1 overflow-y-auto p-4 md:p-8 pb-20 md:pb-8 space-y-8 bg-background scroll-smooth">
             <div className="max-w-[1600px] mx-auto">{children}</div>
           </main>
 
-          <footer className="bg-card border-t border-border py-3 px-6 text-[10px] text-muted-foreground flex items-center justify-center shrink-0">
+          <footer className="bg-card border-t border-border py-3 px-6 text-[10px] text-muted-foreground flex items-center justify-center shrink-0 hidden md:flex">
             <div className="flex items-center gap-4">
               <span className="font-bold">© 2026 Coinpree</span>
               <span className="opacity-50">|</span>
-              <span className="font-semibold text-primary">Developed by Pushparaj M</span>
+              <Link href="/disclaimer" className="hover:text-foreground transition-colors">
+                Disclaimer
+              </Link>
+              <span className="opacity-50">|</span>
+              <Link href="/terms" className="hover:text-foreground transition-colors">
+                Terms of Service
+              </Link>
+              <span className="opacity-50">|</span>
+              <Link href="/privacy" className="hover:text-foreground transition-colors">
+                Privacy Policy
+              </Link>
+
             </div>
           </footer>
         </div>
+      </div>
+
+      {/* Mobile Bottom Navigation */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-card border-t border-border flex items-center justify-around z-50 px-4 pb-safe">
+        <Link href="/" className="flex flex-col items-center gap-1 w-full h-full justify-center">
+          <div className={cn("p-1.5 rounded-lg transition-colors", pathname === "/" ? "bg-primary/10 text-primary" : "text-muted-foreground")}>
+            <Activity size={20} className={cn(pathname === "/" && "fill-current")} />
+          </div>
+          <span className={cn("text-[10px] font-bold", pathname === "/" ? "text-primary" : "text-muted-foreground")}>Derivatives</span>
+        </Link>
+
+        <Link href="/binance-futures" className="flex flex-col items-center gap-1 w-full h-full justify-center">
+          <div className={cn("p-1.5 rounded-lg transition-colors", pathname === "/binance-futures" ? "bg-primary/10 text-primary" : "text-muted-foreground")}>
+            <TrendingUp size={20} className={cn(pathname === "/binance-futures" && "fill-current")} />
+          </div>
+          <span className={cn("text-[10px] font-bold", pathname === "/binance-futures" ? "text-primary" : "text-muted-foreground")}>Binance</span>
+        </Link>
+
+        <Link href="/settings" className="flex flex-col items-center gap-1 w-full h-full justify-center opacity-50 pointer-events-none">
+          <div className={cn("p-1.5 rounded-lg transition-colors", "text-muted-foreground")}>
+            <Settings size={20} />
+          </div>
+          <span className={cn("text-[10px] font-bold text-muted-foreground")}>Settings</span>
+        </Link>
       </div>
     </div>
   );

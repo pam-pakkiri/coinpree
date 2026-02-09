@@ -196,7 +196,7 @@ function calculateEMA(prices: number[], period: number): number {
 /**
  * Calculate EMA array for ALL data points (needed for crossover detection)
  */
-function calculateEMAArray(prices: number[], period: number): number[] {
+export function calculateEMAArray(prices: number[], period: number): number[] {
   if (!prices || prices.length < period) {
     return [];
   }
@@ -251,7 +251,7 @@ function calculateVolatility(prices: number[]): number {
  * Detect ACTUAL crossover in EMA arrays
  * STRICT: Only returns crossover if it happened in the specified window
  */
-function detectCrossover(
+export function detectCrossover(
   ema7Array: number[],
   ema99Array: number[],
   maxCandlesBack: number = 5,
@@ -748,8 +748,16 @@ async function processCoinWithOHLC(
       return null;
     }
 
-    // Detect crossover in last 3 candles (FRESH signals only)
-    const crossover = detectCrossover(ema7Array, ema99Array, 3);
+    // Calculate lookback based on timeframe to cover 24 hours
+    let lookback = 288; // Default for 5m (12 * 24)
+    if (timeframe === "15m") lookback = 96;
+    if (timeframe === "30m") lookback = 48;
+    if (timeframe === "1h") lookback = 24;
+    if (timeframe === "4h") lookback = 6;
+    if (timeframe === "1d") lookback = 2;
+
+    // Detect crossover in last 24h
+    const crossover = detectCrossover(ema7Array, ema99Array, lookback);
 
     if (!crossover.type) {
       return null; // No fresh crossover found
@@ -972,8 +980,16 @@ async function processCoinWithSparkline(
       return null;
     }
 
-    // Detect crossover in last 5 candles
-    const crossover = detectCrossover(ema7Array, ema99Array, 5);
+    // Calculate lookback based on timeframe to cover 24 hours
+    let lookback = 288; // Default for 5m (12 * 24)
+    if (timeframe === "15m") lookback = 96;
+    if (timeframe === "30m") lookback = 48;
+    if (timeframe === "1h") lookback = 24;
+    if (timeframe === "4h") lookback = 6;
+    if (timeframe === "1d") lookback = 2;
+
+    // Detect crossover in last 24h
+    const crossover = detectCrossover(ema7Array, ema99Array, lookback);
 
     if (!crossover.type) {
       return null; // No fresh crossover found
@@ -1195,11 +1211,8 @@ export async function calculateMACrossovers(
       }
     }
 
-    // Sort by score (highest first), then by freshness (most recent first)
-    signals.sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return a.candlesAgo - b.candlesAgo;
-    });
+    // Sort by Time (Newest First) as requested
+    signals.sort((a, b) => b.crossoverTimestamp - a.crossoverTimestamp);
 
     // Count data sources
     const binanceCount = signals.filter((s) =>
