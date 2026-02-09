@@ -5,7 +5,7 @@ import { getBinanceFuturesSignalsAction } from '@/app/actions';
 export default function BinanceFuturesPage() {
     return (
         <SignalsTerminal
-            title="BINANCE FUTURES "
+            title="EXCHANGE FUTURES MARKET"
             description=""
             fetchAction={getBinanceFuturesSignalsAction}
         />

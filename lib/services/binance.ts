@@ -40,19 +40,7 @@ type BinanceKline = [
  * Calculate Exponential Moving Average (EMA)
  * Copied from coingecko.ts to avoid circular deps or refactoring
  */
-function calculateEMA(prices: number[], period: number): number {
-  if (!prices || prices.length < period) return 0;
 
-  const multiplier = 2 / (period + 1);
-  let ema =
-    prices.slice(0, period).reduce((sum, price) => sum + price, 0) / period;
-
-  for (let i = period; i < prices.length; i++) {
-    ema = (prices[i] - ema) * multiplier + ema;
-  }
-
-  return ema;
-}
 
 /**
  * Calculate volatility based on price changes
@@ -280,6 +268,22 @@ export async function getBinanceFuturesSignals(
           // Cap score
           score = Math.min(Math.max(Math.round(score), 0), 100);
 
+          // Calculate 1h change
+          let change1h = 0;
+          if (timeframe === "5m" && prices.length > 12) {
+            const oldPrice = prices[prices.length - 13];
+            change1h = ((currentPrice - oldPrice) / oldPrice) * 100;
+          } else if (timeframe === "15m" && prices.length > 4) {
+            const oldPrice = prices[prices.length - 5];
+            change1h = ((currentPrice - oldPrice) / oldPrice) * 100;
+          } else if (timeframe === "30m" && prices.length > 2) {
+            const oldPrice = prices[prices.length - 3];
+            change1h = ((currentPrice - oldPrice) / oldPrice) * 100;
+          } else if (timeframe === "1h" && prices.length > 1) {
+            const oldPrice = prices[prices.length - 2];
+            change1h = ((currentPrice - oldPrice) / oldPrice) * 100;
+          }
+
           // Calculate accurate crossover timestamp
           // timestamp = now - (candlesAgo * interval_in_ms)
           // interval map: 5m=300000, 15m=900000, etc.
@@ -305,7 +309,7 @@ export async function getBinanceFuturesSignals(
             score,
             price: currentPrice,
             currentPrice: currentPrice,
-            change1h: 0,
+            change1h: change1h,
             change24h: parseFloat(pair.priceChangePercent),
             change7d: 0,
             volume24h: parseFloat(pair.quoteVolume),

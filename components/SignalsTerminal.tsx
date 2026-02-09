@@ -230,11 +230,11 @@ const SignalRow = memo(
         </TableCell>
 
         <TableCell className="text-right">
-          <FormatPercent val={coin.change24h} />
+          <FormatPercent val={coin.change1h} />
         </TableCell>
 
         <TableCell className="text-right">
-          <FormatPercent val={coin.change7d} />
+          <FormatPercent val={coin.change24h} />
         </TableCell>
 
         <TableCell className="text-right">
@@ -917,8 +917,8 @@ function SignalsTerminal({
                     <TableHead>Signal & Timing</TableHead>
                     <TableHead>Score</TableHead>
                     <TableHead className="text-right">Price</TableHead>
-                    <TableHead className="text-right">24h</TableHead>
-                    <TableHead className="text-right">7d</TableHead>
+                    <TableHead className="text-right">1H</TableHead>
+                    <TableHead className="text-right">24H</TableHead>
                     <TableHead className="text-right">Volume</TableHead>
                     <TableHead className="text-right">Market Cap</TableHead>
                     <TableHead className="text-right">Volatility</TableHead>

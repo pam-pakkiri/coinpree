@@ -4,8 +4,8 @@ import { getCombinedSignals } from "@/app/actions";
 export default function Home() {
   return (
     <SignalsTerminal
-      title="COMBINED SIGNALS (FUTURES )"
-      description="Derivatives Market"
+      title="EXCHANGE FUTURES"
+      description="Combined Market Data"
       fetchAction={getCombinedSignals}
     />
   );

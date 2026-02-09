@@ -72,7 +72,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
-              Derivatives (CG) - All
+              Exchange Futures
             </Button>
           </Link>
           <Link href="/binance-futures">
@@ -85,7 +85,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   : "text-muted-foreground hover:text-foreground"
               )}
             >
-              Binance Futures
+              Exchange Futures Market
             </Button>
           </Link>
         </div>
@@ -118,7 +118,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
           <div className="h-8 w-px bg-border mx-2" />
         </div>
-      </header>
+      </header >
 
       <div className="flex flex-1 overflow-hidden">
         {/* Main Content Area */}
@@ -162,7 +162,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className={cn("p-1.5 rounded-lg transition-colors", pathname === "/binance-futures" ? "bg-primary/10 text-primary" : "text-muted-foreground")}>
             <TrendingUp size={20} className={cn(pathname === "/binance-futures" && "fill-current")} />
           </div>
-          <span className={cn("text-[10px] font-bold", pathname === "/binance-futures" ? "text-primary" : "text-muted-foreground")}>Binance</span>
+          <span className={cn("text-[10px] font-bold", pathname === "/binance-futures" ? "text-primary" : "text-muted-foreground")}>Futures Market</span>
         </Link>
 
         <Link href="/settings" className="flex flex-col items-center gap-1 w-full h-full justify-center opacity-50 pointer-events-none">
@@ -172,6 +172,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <span className={cn("text-[10px] font-bold text-muted-foreground")}>Settings</span>
         </Link>
       </div>
-    </div>
+    </div >
   );
 }
