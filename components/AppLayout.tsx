@@ -133,62 +133,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <div className="flex flex-1 overflow-hidden">
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col overflow-hidden bg-background">
-          {/* Sub-Header Stats Block */}
-          <div className="bg-gradient-to-r from-background via-primary/5 to-background py-3 px-6 text-[11px] font-bold text-muted-foreground border-b border-border flex flex-wrap gap-x-8 gap-y-2 uppercase tracking-wide shrink-0">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-[#0ecb81] animate-pulse" />
-              <span className="opacity-60">Live Updates:</span>
-              <span className="text-foreground font-black">Active</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="opacity-60">24H Volume:</span>
-              <span className="text-foreground font-black">
-                {snapshot?.vol24h || "$20.61B"}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="opacity-60">Gas Price:</span>
-              <span className="text-orange-500 font-black">
-                {snapshot?.gasPrice ? `${snapshot.gasPrice} Gwei` : "12 Gwei"}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="opacity-60">Signal Method:</span>
-              <span className="text-primary font-black">
-                7/99 EMA Crossover
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="opacity-60">Data Source:</span>
-              <span className="text-foreground font-black">CoinGecko API</span>
-            </div>
-          </div>
-
           {/* Content Viewport */}
           <main className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 bg-background scroll-smooth">
             <div className="max-w-[1600px] mx-auto">{children}</div>
           </main>
 
-          <footer className="bg-card border-t border-border py-3 px-6 text-[10px] text-muted-foreground flex items-center justify-between shrink-0">
+          <footer className="bg-card border-t border-border py-3 px-6 text-[10px] text-muted-foreground flex items-center justify-center shrink-0">
             <div className="flex items-center gap-4">
-              <span className="font-bold">© 2026 Coinpree Terminal</span>
-              <span className="opacity-50">|</span>
-              <span>Powered by CoinGecko API</span>
+              <span className="font-bold">© 2026 Coinpree</span>
               <span className="opacity-50">|</span>
               <span className="font-semibold text-primary">Developed by Pushparaj M</span>
-            </div>
-            <div className="flex items-center gap-4 font-bold uppercase tracking-widest">
-              <a href="#" className="hover:text-primary transition-colors">
-                About
-              </a>
-              <span className="opacity-30">•</span>
-              <a href="#" className="hover:text-primary transition-colors">
-                API Docs
-              </a>
-              <span className="opacity-30">•</span>
-              <a href="#" className="hover:text-primary transition-colors">
-                Support
-              </a>
             </div>
           </footer>
         </div>

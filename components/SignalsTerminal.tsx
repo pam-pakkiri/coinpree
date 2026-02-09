@@ -11,7 +11,6 @@ import {
   Globe,
   ExternalLink,
   Search,
-  ChevronRight,
   ArrowUpRight,
   Trophy,
   Target,
@@ -42,7 +41,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
-import CoinDetailsPane from "./CoinDetailsPane";
 import { getMACrossoverSignals } from "@/app/actions";
 
 // --- DATA TYPE ---
@@ -101,31 +99,38 @@ const SignalRow = memo(
   ({
     coin,
     index,
-    onSelect,
     isNew = false,
   }: {
     coin: SignalData;
     index: number;
-    onSelect: (c: SignalData) => void;
     isNew?: boolean;
   }) => {
     const isBuy = coin.signalType === "BUY";
     const isSell = coin.signalType === "SELL";
     const displayPrice = coin.currentPrice || coin.price || 0;
-    const entryTime = new Date(coin.timestamp || Date.now()).toLocaleTimeString(
+
+    // Smart time display
+    const timeSinceCrossover = Date.now() - (coin.crossoverTimestamp || coin.timestamp || Date.now());
+    const isFresh = timeSinceCrossover < 5 * 60 * 1000; // 5 minutes
+    const crossoverTime = new Date(coin.crossoverTimestamp || coin.timestamp || Date.now()).toLocaleString(
       [],
-      { hour: "2-digit", minute: "2-digit" },
+      {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      },
     );
+
     const coinName = coin.name || coin.fullData?.name || coin.symbol;
     const coinImage = coin.image || coin.fullData?.image || "";
 
     return (
       <TableRow
         className={cn(
-          "gecko-table-row group cursor-pointer",
+          "gecko-table-row group",
           isNew && "animate-pulse bg-primary/5"
         )}
-        onClick={() => onSelect(coin)}
       >
         <TableCell className="w-10 text-center text-muted-foreground text-[11px] font-bold">
           {index + 1}
@@ -166,36 +171,39 @@ const SignalRow = memo(
 
         <TableCell>
           <div className="flex flex-col gap-1">
-            <Badge
-              className={cn(
-                "font-bold text-[10px] px-2 py-0.5 uppercase tracking-wide w-fit",
-                isBuy
-                  ? "bg-[#0ecb81]/10 text-[#0ecb81] hover:bg-[#0ecb81]/20 border-[#0ecb81]/20"
-                  : isSell
-                    ? "bg-[#f6465d]/10 text-[#f6465d] hover:bg-[#f6465d]/20 border-[#f6465d]/20"
-                    : "bg-muted text-muted-foreground border-border",
+            <div className="flex items-center gap-2">
+              <Badge
+                className={cn(
+                  "font-bold text-[10px] px-2 py-0.5 uppercase tracking-wide w-fit",
+                  isBuy
+                    ? "bg-[#0ecb81]/10 text-[#0ecb81] hover:bg-[#0ecb81]/20 border-[#0ecb81]/20"
+                    : isSell
+                      ? "bg-[#f6465d]/10 text-[#f6465d] hover:bg-[#f6465d]/20 border-[#f6465d]/20"
+                      : "bg-muted text-muted-foreground border-border",
+                )}
+              >
+                {isBuy ? "🟢 BUY" : isSell ? "🔴 SELL" : "⚪ NEUTRAL"}
+              </Badge>
+              {coin.candlesAgo !== undefined && (
+                <span className="text-[9px] text-muted-foreground font-medium">
+                  {coin.candlesAgo === 0
+                    ? "NOW"
+                    : `${coin.candlesAgo} candle${coin.candlesAgo > 1 ? "s" : ""} ago`}
+                </span>
               )}
-            >
-              {isBuy ? "🟢 BUY" : isSell ? "🔴 SELL" : "⚪ NEUTRAL"}
-            </Badge>
-            {coin.candlesAgo !== undefined && (
-              <span className="text-[9px] text-muted-foreground font-medium">
-                {coin.candlesAgo === 0
-                  ? "FRESH!"
-                  : `${coin.candlesAgo} candle${coin.candlesAgo > 1 ? "s" : ""} ago`}
-              </span>
-            )}
-          </div>
-        </TableCell>
-
-        <TableCell>
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[13px] font-bold text-foreground">
+            </div>
+            <span className="text-[12px] font-bold text-foreground">
               {coin.signalName}
             </span>
-            <span className="text-[10px] text-muted-foreground font-mono">
-              {entryTime}
-            </span>
+            {isFresh ? (
+              <span className="text-[11px] font-bold text-orange-500 flex items-center gap-1">
+                🔥 FRESH!
+              </span>
+            ) : (
+              <span className="text-[10px] text-muted-foreground font-mono">
+                {crossoverTime}
+              </span>
+            )}
           </div>
         </TableCell>
 
@@ -325,16 +333,6 @@ const SignalRow = memo(
             </Tooltip>
           </TooltipProvider>
         </TableCell>
-
-        <TableCell>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-8 w-8 p-0 text-muted-foreground hover:text-primary"
-          >
-            <ChevronRight size={16} />
-          </Button>
-        </TableCell>
       </TableRow>
     );
   },
@@ -450,10 +448,9 @@ function SignalsTerminal({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCoin, setSelectedCoin] = useState<SignalData | null>(null);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [newSignalIds, setNewSignalIds] = useState<Set<string>>(new Set());
+  const [signalHistory, setSignalHistory] = useState<Map<string, number>>(new Map());
 
   // Timeframe
   const [timeframe, setTimeframe] = useState("1h");
@@ -466,6 +463,62 @@ function SignalsTerminal({
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, timeframe]);
+
+  // Daily reset at 5:30 AM IST
+  useEffect(() => {
+    const checkAndResetHistory = () => {
+      try {
+        const lastReset = localStorage.getItem('coinpree_last_reset');
+        const now = new Date();
+
+        // Convert to IST (UTC+5:30)
+        const istOffset = 5.5 * 60 * 60 * 1000;
+        const istNow = new Date(now.getTime() + istOffset);
+
+        // Today's reset time (5:30 AM IST)
+        const todayReset = new Date(istNow);
+        todayReset.setHours(5, 30, 0, 0);
+
+        // Check if we need to reset
+        if (lastReset) {
+          const lastResetDate = new Date(parseInt(lastReset));
+          const lastResetIST = new Date(lastResetDate.getTime() + istOffset);
+
+          // If current time is past 5:30 AM and last reset was before today's 5:30 AM
+          if (istNow >= todayReset && lastResetIST < todayReset) {
+            console.log('🔄 Daily reset at 5:30 AM IST - Clearing signal history');
+            localStorage.removeItem('coinpree_signal_history');
+            localStorage.setItem('coinpree_last_reset', Date.now().toString());
+            setSignalHistory(new Map());
+          }
+        } else {
+          // First time - set last reset to now
+          localStorage.setItem('coinpree_last_reset', Date.now().toString());
+        }
+      } catch (error) {
+        console.warn('Error checking reset:', error);
+      }
+    };
+
+    // Load existing history from localStorage
+    try {
+      const stored = localStorage.getItem('coinpree_signal_history');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        const historyMap = new Map(Object.entries(parsed));
+        setSignalHistory(historyMap);
+      }
+    } catch (error) {
+      console.warn('Error loading signal history:', error);
+    }
+
+    // Check reset on mount
+    checkAndResetHistory();
+
+    // Check every hour for reset
+    const interval = setInterval(checkAndResetHistory, 60 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   const fetchData = async (isInitialLoad = false) => {
     try {
@@ -506,6 +559,27 @@ function SignalsTerminal({
           // Mark these signals as new
           const newIds = new Set(truelyNewSignals.map(s => `${s.coinId}-${s.timestamp}`));
           setNewSignalIds(newIds);
+
+          // Track in history
+          setSignalHistory((prevHistory) => {
+            const newHistory = new Map(prevHistory);
+            truelyNewSignals.forEach((sig) => {
+              const key = `${sig.coinId}-${sig.signalType}`;
+              if (!newHistory.has(key)) {
+                newHistory.set(key, Date.now());
+              }
+            });
+
+            // Save to localStorage
+            try {
+              const historyObj = Object.fromEntries(newHistory);
+              localStorage.setItem('coinpree_signal_history', JSON.stringify(historyObj));
+            } catch (error) {
+              console.warn('Error saving signal history:', error);
+            }
+
+            return newHistory;
+          });
 
           // Clear the "new" marker after 5 seconds
           setTimeout(() => {
@@ -559,10 +633,7 @@ function SignalsTerminal({
     ? Math.ceil(filteredSignals.length / itemsPerPage)
     : 0;
 
-  const handleSelectCoin = (coin: SignalData) => {
-    setSelectedCoin(coin);
-    setDetailsOpen(true);
-  };
+
 
   return (
     <div className="space-y-6">
@@ -709,7 +780,6 @@ function SignalsTerminal({
                     <TableHead className="w-10 text-center">#</TableHead>
                     <TableHead className="min-w-[280px]">Coin</TableHead>
                     <TableHead>Signal & Timing</TableHead>
-                    <TableHead>Details</TableHead>
                     <TableHead>Score</TableHead>
                     <TableHead className="text-right">Price</TableHead>
                     <TableHead className="text-right">24h</TableHead>
@@ -718,7 +788,6 @@ function SignalsTerminal({
                     <TableHead className="text-right">Market Cap</TableHead>
                     <TableHead className="text-right">Volatility</TableHead>
                     <TableHead className="text-right">MA Formula</TableHead>
-                    <TableHead></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -731,7 +800,6 @@ function SignalsTerminal({
                         key={signalKey}
                         coin={coin}
                         index={indexOfFirstItem + idx}
-                        onSelect={handleSelectCoin}
                         isNew={isNew}
                       />
                     );
@@ -798,14 +866,6 @@ function SignalsTerminal({
           </>
         )}
       </div>
-
-      {selectedCoin && (
-        <CoinDetailsPane
-          coin={selectedCoin}
-          open={detailsOpen}
-          onClose={() => setDetailsOpen(false)}
-        />
-      )}
     </div>
   );
 }

@@ -868,6 +868,9 @@ async function processCoinWithOHLC(
       : "";
     const formula = `EMA(7)=${ema7Current.toFixed(6)} | EMA(99)=${ema99Current.toFixed(6)} | Gap=${crossoverStrength.toFixed(2)}%${dataSourceTag}${futuresTag}`;
 
+    // Get the actual crossover timestamp from the candle where it occurred
+    const crossoverTimestamp = ohlcData[crossover.index][0];
+
     // Create signal object
     const signal: MASignal = {
       coinId: coin.id,
@@ -886,7 +889,7 @@ async function processCoinWithOHLC(
       volume24h: coin.total_volume,
       marketCap: coin.market_cap,
       timestamp: Date.now(),
-      crossoverTimestamp: Date.now(),
+      crossoverTimestamp: crossoverTimestamp,
       candlesAgo: crossover.candlesAgo,
       entryPrice,
       stopLoss,
