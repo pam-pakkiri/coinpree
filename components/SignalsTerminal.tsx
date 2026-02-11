@@ -416,13 +416,15 @@ function SignalsTerminal({
   title,
   description,
   fetchAction,
+  initialData = [],
 }: {
   title: string;
   description: string;
   fetchAction?: (timeframe?: string) => Promise<SignalData[]>;
+  initialData?: SignalData[];
 }) {
-  const [signals, setSignals] = useState<SignalData[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [signals, setSignals] = useState<SignalData[]>(initialData);
+  const [loading, setLoading] = useState(initialData.length === 0);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());

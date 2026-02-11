@@ -36,8 +36,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     return () => clearInterval(interval);
   }, []);
 
-  if (!mounted) return null;
-
   return (
     <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden font-sans">
       {/* Top Bar */}
@@ -104,8 +102,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             size="icon"
             className="h-9 w-9 text-[var(--header-subtext)] hover:text-[var(--header-text)] hover:bg-[var(--header-search-bg)] rounded-lg transition-colors"
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            suppressHydrationWarning
           >
-            {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+            {mounted ? (theme === "dark" ? <Sun size={18} /> : <Moon size={18} />) : <Sun size={18} />}
           </Button>
 
           <Button
