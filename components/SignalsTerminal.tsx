@@ -128,18 +128,36 @@ const SignalRow = memo(
     const isSell = coin.signalType === "SELL";
     const displayPrice = coin.currentPrice || coin.price || 0;
 
-    // Smart time display
-    const timeSinceCrossover = Date.now() - (coin.crossoverTimestamp || coin.timestamp || Date.now());
+    // Client-only state to prevent hydration mismatch
+    const [mounted, setMounted] = useState(false);
+    const [currentTime, setCurrentTime] = useState(0);
+
+    useEffect(() => {
+      setMounted(true);
+      setCurrentTime(Date.now());
+
+      // Update time every 30 seconds for freshness indicator
+      const interval = setInterval(() => {
+        setCurrentTime(Date.now());
+      }, 30000);
+
+      return () => clearInterval(interval);
+    }, []);
+
+    // Smart time display (client-safe)
+    const crossoverTimestamp = coin.crossoverTimestamp || coin.timestamp || 0;
+    const timeSinceCrossover = mounted ? currentTime - crossoverTimestamp : 0;
     const isFresh = timeSinceCrossover < 5 * 60 * 1000; // 5 minutes
-    const crossoverTime = new Date(coin.crossoverTimestamp || coin.timestamp || Date.now()).toLocaleString(
-      [],
-      {
+
+    // Format time only on client to prevent hydration mismatch
+    const crossoverTime = mounted
+      ? new Date(crossoverTimestamp).toLocaleString([], {
         month: "short",
         day: "numeric",
         hour: "2-digit",
         minute: "2-digit",
-      },
-    );
+      })
+      : "Loading...";
 
     const coinName = coin.name || coin.fullData?.name || coin.symbol;
     const coinImage = coin.image || coin.fullData?.image || "";
@@ -236,14 +254,11 @@ const SignalRow = memo(
 
         <TableCell className="text-right">
           <div className="flex flex-col items-end gap-1">
-            <span className="text-[14px] font-bold text-foreground tabular-nums">
+            <span className="text-[14px] font-bold text-foreground tabular-nums" suppressHydrationWarning>
               $
               {displayPrice < 1
                 ? displayPrice.toFixed(6)
-                : displayPrice.toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}
+                : displayPrice.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}
             </span>
           </div>
         </TableCell>
@@ -874,9 +889,6 @@ function SignalsTerminal({
               {currentItems.map((coin) => {
                 const signalKey = `${coin.coinId}-${coin.timestamp}`;
                 const isNew = newSignalIds.has(signalKey);
-                // Smart time display
-                const timeSinceCrossover = Date.now() - (coin.crossoverTimestamp || coin.timestamp || Date.now());
-                const isFresh = timeSinceCrossover < 5 * 60 * 1000;
 
                 return (
                   <div
@@ -908,8 +920,8 @@ function SignalsTerminal({
                         </div>
                       </div>
                       <div className="flex flex-col items-end">
-                        <span className="text-[15px] font-bold text-foreground">
-                          ${coin.currentPrice < 1 ? coin.currentPrice.toFixed(6) : coin.currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        <span className="text-[15px] font-bold text-foreground" suppressHydrationWarning>
+                          ${coin.currentPrice < 1 ? coin.currentPrice.toFixed(6) : coin.currentPrice.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ",")}
                         </span>
                         <FormatPercent val={coin.change24h} />
                       </div>
@@ -932,8 +944,8 @@ function SignalsTerminal({
                       <div className="flex flex-col gap-1 items-end">
                         <span className="text-[10px] text-muted-foreground font-bold uppercase">Detected</span>
                         <div className="flex items-center gap-1.5">
-                          <Badge variant="outline" className="text-[10px] font-mono font-bold text-foreground border-border/50 bg-background/50">
-                            {new Date(coin.crossoverTimestamp || coin.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          <Badge variant="outline" className="text-[10px] font-mono font-bold text-foreground border-border/50 bg-background/50" suppressHydrationWarning>
+                            {typeof window !== 'undefined' && new Date(coin.crossoverTimestamp || coin.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                           </Badge>
                         </div>
                         <span className="text-[10px] text-muted-foreground font-medium">
