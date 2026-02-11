@@ -62,12 +62,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
         {/* Navigation */}
         <div className="hidden md:flex items-center gap-1 mr-6">
-          <Link href="/">
+          <Link href="/exchange-futures">
             <Button
-              variant={pathname === "/" ? "secondary" : "ghost"}
+              variant={pathname === "/exchange-futures" ? "secondary" : "ghost"}
               className={cn(
                 "h-8 text-[12px] font-bold px-3",
-                pathname === "/"
+                pathname === "/exchange-futures"
                   ? "bg-primary/10 text-primary hover:bg-primary/15"
                   : "text-muted-foreground hover:text-foreground"
               )}
@@ -75,12 +75,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               Exchange Futures
             </Button>
           </Link>
-          <Link href="/binance-futures">
+          <Link href="/futures">
             <Button
-              variant={pathname === "/binance-futures" ? "secondary" : "ghost"}
+              variant={pathname === "/futures" ? "secondary" : "ghost"}
               className={cn(
                 "h-8 text-[12px] font-bold px-3",
-                pathname === "/binance-futures"
+                pathname === "/futures"
                   ? "bg-primary/10 text-primary hover:bg-primary/15"
                   : "text-muted-foreground hover:text-foreground"
               )}
@@ -151,18 +151,18 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* Mobile Bottom Navigation */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-card border-t border-border flex items-center justify-around z-50 px-4 pb-safe">
-        <Link href="/" className="flex flex-col items-center gap-1 w-full h-full justify-center">
-          <div className={cn("p-1.5 rounded-lg transition-colors", pathname === "/" ? "bg-primary/10 text-primary" : "text-muted-foreground")}>
-            <Activity size={20} className={cn(pathname === "/" && "fill-current")} />
+        <Link href="/exchange-futures" className="flex flex-col items-center gap-1 w-full h-full justify-center">
+          <div className={cn("p-1.5 rounded-lg transition-colors", pathname === "/exchange-futures" ? "bg-primary/10 text-primary" : "text-muted-foreground")}>
+            <Activity size={20} className={cn(pathname === "/exchange-futures" && "fill-current")} />
           </div>
-          <span className={cn("text-[10px] font-bold", pathname === "/" ? "text-primary" : "text-muted-foreground")}>Derivatives</span>
+          <span className={cn("text-[10px] font-bold", pathname === "/exchange-futures" ? "text-primary" : "text-muted-foreground")}>Exchange Futures</span>
         </Link>
 
-        <Link href="/binance-futures" className="flex flex-col items-center gap-1 w-full h-full justify-center">
-          <div className={cn("p-1.5 rounded-lg transition-colors", pathname === "/binance-futures" ? "bg-primary/10 text-primary" : "text-muted-foreground")}>
-            <TrendingUp size={20} className={cn(pathname === "/binance-futures" && "fill-current")} />
+        <Link href="/futures" className="flex flex-col items-center gap-1 w-full h-full justify-center">
+          <div className={cn("p-1.5 rounded-lg transition-colors", pathname === "/futures" ? "bg-primary/10 text-primary" : "text-muted-foreground")}>
+            <TrendingUp size={20} className={cn(pathname === "/futures" && "fill-current")} />
           </div>
-          <span className={cn("text-[10px] font-bold", pathname === "/binance-futures" ? "text-primary" : "text-muted-foreground")}>Futures Market</span>
+          <span className={cn("text-[10px] font-bold", pathname === "/futures" ? "text-primary" : "text-muted-foreground")}>Futures Market</span>
         </Link>
 
         <Link href="/settings" className="flex flex-col items-center gap-1 w-full h-full justify-center opacity-50 pointer-events-none">

@@ -22,6 +22,7 @@ import {
   Filter,
   ArrowUpDown,
   RefreshCw,
+  HelpCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -32,14 +33,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+
 import { Skeleton } from "@/components/ui/skeleton";
 import { getMACrossoverSignals } from "@/app/actions";
 
@@ -65,6 +67,7 @@ export interface SignalData {
   stopLoss: number;
   takeProfit: number;
   volatility: number;
+  volatilityTooltip?: string;
   formula: string;
   ema7?: number;
   ema99?: number;
@@ -93,6 +96,22 @@ const FormatPercent = ({ val }: { val: number }) => {
     </span>
   );
 };
+
+const HeaderTooltip = ({ title, content, align = "left" }: { title: string, content: string, align?: "left" | "right" | "center" }) => (
+  <div className={cn("flex items-center gap-1.5", align === "right" && "justify-end", align === "center" && "justify-center")}>
+    <span>{title}</span>
+    <TooltipProvider delayDuration={0}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <HelpCircle size={12} className="text-muted-foreground/50 hover:text-primary cursor-help" />
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-[200px] text-xs font-medium z-50 p-3 bg-popover text-popover-foreground shadow-xl border-border">
+          {content}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  </div>
+);
 
 // --- ROW COMPONENT ---
 const SignalRow = memo(
@@ -250,11 +269,33 @@ const SignalRow = memo(
         </TableCell>
 
         <TableCell className="text-right">
-          <span className="text-[13px] font-bold text-orange-500 tabular-nums">
-            {coin.volatility.toFixed(2)}%
-          </span>
+          <TooltipProvider delayDuration={0}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div
+                  className={cn(
+                    "inline-flex items-center justify-center w-10 h-8 rounded-md font-bold text-sm cursor-help select-none transition-colors border",
+                    coin.volatility >= 8
+                      ? "bg-red-500/10 text-red-500 border-red-500/20"
+                      : coin.volatility >= 6
+                        ? "bg-orange-500/10 text-orange-500 border-orange-500/20"
+                        : coin.volatility >= 4
+                          ? "bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
+                          : "bg-green-500/10 text-green-500 border-green-500/20",
+                  )}
+                >
+                  {coin.volatility.toFixed(1)}
+                </div>
+              </TooltipTrigger>
+              <TooltipContent className="bg-popover text-popover-foreground border-border p-3 shadow-xl max-w-[250px] z-50">
+                <div className="text-xs font-mono whitespace-pre-wrap leading-relaxed text-left">
+                  {coin.volatilityTooltip || "No volatility data"}
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </TableCell>
-      </TableRow>
+      </TableRow >
     );
   },
 );
@@ -475,16 +516,30 @@ function SignalsTerminal({
           return newData;
         }
 
-        // Incremental update: prevent duplicates based on Event ID (Coin + Signal + Time)
-        // We use crossoverTimestamp to identify the specific event instance.
-        const existingEventIds = new Set(
-          prevSignals.map((s) => `${s.coinId}-${s.signalType}-${s.crossoverTimestamp}`)
-        );
+        // Incremental update: Merge new data into existing signals based on Event ID
+        // Event ID = Coin + Signal Type + Crossover Timestamp (which is now stable candle time)
 
-        const truelyNewSignals = newData.filter(
-          (newSig) =>
-            !existingEventIds.has(`${newSig.coinId}-${newSig.signalType}-${newSig.crossoverTimestamp}`)
-        );
+        // Map of new data for quick lookup and tracking "new" signals
+        const newDataMap = new Map<string, SignalData>();
+        newData.forEach((s) => {
+          const key = `${s.coinId}-${s.signalType}-${s.crossoverTimestamp}`;
+          newDataMap.set(key, s);
+        });
+
+        // 1. Update existing signals with fresh data (price, score, volatility, etc.)
+        const updatedPrevSignals = prevSignals.map((prevSig) => {
+          const key = `${prevSig.coinId}-${prevSig.signalType}-${prevSig.crossoverTimestamp}`;
+          if (newDataMap.has(key)) {
+            // Found fresh data for this exact event!
+            const freshSig = newDataMap.get(key)!;
+            newDataMap.delete(key); // Mark as consumed so we know it's not "new"
+            return freshSig; // Use fresh data (updated price/score) but same event ID
+          }
+          return prevSig; // Keep old data if not present in this fetch (e.g. dropped out of top list)
+        });
+
+        // 2. Identify TRULY new signals (remaining in map)
+        const truelyNewSignals = Array.from(newDataMap.values());
 
         if (truelyNewSignals.length > 0) {
           console.log(`🆕 ${truelyNewSignals.length} new signals detected!`, truelyNewSignals.map(s => s.symbol));
@@ -518,13 +573,12 @@ function SignalsTerminal({
             setNewSignalIds(new Set());
           }, 5000);
 
-          // Add new signals to the TOP (most recent first)
-          // We keep ALL previous signals, even if they are old now.
-          return [...truelyNewSignals, ...prevSignals];
+          // Add new signals to the TOP
+          return [...truelyNewSignals, ...updatedPrevSignals];
         }
 
-        // No new signals, return existing list to preserve history
-        return prevSignals;
+        // No new signals, but return updated list (prices/scores might have changed)
+        return updatedPrevSignals;
       });
 
       setLastUpdate(new Date());
@@ -538,7 +592,7 @@ function SignalsTerminal({
 
   useEffect(() => {
     fetchData(true); // Initial load
-    const interval = setInterval(() => fetchData(false), 15000); // Check for new signals every 15 seconds
+    const interval = setInterval(() => fetchData(false), 60000); // Check for new signals every 60 seconds
     return () => clearInterval(interval);
   }, [timeframe]); // Refetch when timeframe changes
 
@@ -914,14 +968,30 @@ function SignalsTerminal({
                   <TableRow className="gecko-table-header">
                     <TableHead className="w-10 text-center">#</TableHead>
                     <TableHead className="w-[180px]">Coin</TableHead>
-                    <TableHead>Signal & Timing</TableHead>
-                    <TableHead>Score</TableHead>
-                    <TableHead className="text-right">Price</TableHead>
-                    <TableHead className="text-right">1H</TableHead>
-                    <TableHead className="text-right">24H</TableHead>
-                    <TableHead className="text-right">Volume</TableHead>
-                    <TableHead className="text-right">Market Cap</TableHead>
-                    <TableHead className="text-right">Volatility</TableHead>
+                    <TableHead>
+                      <HeaderTooltip title="Signal & Timing" content="Type of crossover (Golden/Death) and when it was first detected." />
+                    </TableHead>
+                    <TableHead>
+                      <HeaderTooltip title="Score" content="Algo score (0-100) based on trend strength, RSI, and volatility." />
+                    </TableHead>
+                    <TableHead className="text-right">
+                      <HeaderTooltip title="Price" content="Current market price in USDT (Futures) or USD (Spot)." align="right" />
+                    </TableHead>
+                    <TableHead className="text-right">
+                      <HeaderTooltip title="1H" content="Price change in the last 1 hour." align="right" />
+                    </TableHead>
+                    <TableHead className="text-right">
+                      <HeaderTooltip title="24H" content="Price change in the last 24 hours." align="right" />
+                    </TableHead>
+                    <TableHead className="text-right">
+                      <HeaderTooltip title="Volume" content="24-hour trading volume in USD." align="right" />
+                    </TableHead>
+                    <TableHead className="text-right">
+                      <HeaderTooltip title="Market Cap" content="Total market capitalization." align="right" />
+                    </TableHead>
+                    <TableHead className="text-right">
+                      <HeaderTooltip title="Volatility" content="Volatility score (0-10) based on ATR and price range." align="right" />
+                    </TableHead>
 
                   </TableRow>
                 </TableHeader>

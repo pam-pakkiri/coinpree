@@ -1,4 +1,4 @@
-import { MASignal, getBinanceCoinMapping, calculateEMAArray, detectCrossover } from "./coingecko";
+import { MASignal, getBinanceCoinMapping, calculateEMAArray, detectCrossover, calculateVolatilityScore, fetchBinanceKlines, BINANCE_TO_COINGECKO, findCoinMetadata, fetchTopCoins } from "./coingecko";
 
 const BINANCE_FAPI_BASE = "https://fapi.binance.com/fapi/v1";
 
@@ -117,6 +117,13 @@ export async function getBinanceFuturesSignals(
       return binanceSignalsCache.data;
     }
 
+    // Ensure CoinGecko metadata cache is populated (for names/images)
+    try {
+      await fetchTopCoins();
+    } catch (e) {
+      console.warn("⚠️ Failed to fetch CoinGecko metadata for Binance enrichment:", e);
+    }
+
     // Map timeframe to Binance interval
     const intervalMap: { [key: string]: string } = {
       "5m": "5m",
@@ -159,6 +166,7 @@ export async function getBinanceFuturesSignals(
 
       const batchPromises = batch.map(async (pair) => {
         try {
+          // Fetch 500 candles for better EMA convergence
           // Fetch 500 candles for better EMA convergence
           const klineRes = await fetch(
             `${BINANCE_FAPI_BASE}/klines?symbol=${pair.symbol}&interval=${interval}&limit=500`,
@@ -285,24 +293,25 @@ export async function getBinanceFuturesSignals(
           }
 
           // Calculate accurate crossover timestamp
-          // timestamp = now - (candlesAgo * interval_in_ms)
-          // interval map: 5m=300000, 15m=900000, etc.
-          const intervalMsMap: { [key: string]: number } = {
-            "5m": 5 * 60 * 1000,
-            "15m": 15 * 60 * 1000,
-            "30m": 30 * 60 * 1000,
-            "1h": 60 * 60 * 1000,
-            "4h": 4 * 60 * 60 * 1000,
-            "1d": 24 * 60 * 60 * 1000,
-          };
-          const intervalMs = intervalMsMap[timeframe] || 3600000;
-          const crossoverTimestamp = Date.now() - (crossover.candlesAgo * intervalMs);
+          // Use the actual candle timestamp where the crossover occurred
+          const crossoverTimestamp = klines[crossover.index][0];
+
+          const dailyData = await fetchBinanceKlines(pair.symbol, "1d");
+          const volMetric = calculateVolatilityScore(dailyData, currentPrice, parseFloat(pair.quoteVolume), parseFloat(pair.priceChangePercent));
+
+          // Metadata lookup
+          const rawSymbol = pair.symbol.replace("USDT", "");
+          const hardcoded = BINANCE_TO_COINGECKO[pair.symbol];
+          const dynamic = findCoinMetadata(rawSymbol);
+
+          const finalName = dynamic?.name || (hardcoded?.id ? hardcoded.id.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') : rawSymbol);
+          const finalImage = dynamic?.image || hardcoded?.image || "";
 
           return {
             coinId: pair.symbol,
-            symbol: pair.symbol.replace("USDT", ""),
-            name: pair.symbol.replace("USDT", ""),
-            image: "",
+            symbol: rawSymbol,
+            name: finalName,
+            image: finalImage,
             signalType,
             signalName,
             timeframe,
@@ -320,7 +329,8 @@ export async function getBinanceFuturesSignals(
             entryPrice,
             stopLoss,
             takeProfit,
-            volatility: Math.round(volatility * 100) / 100,
+            volatility: volMetric.score,
+            volatilityTooltip: volMetric.tooltip,
             formula: `EMA7/99 | RSI: ${Math.round(rsi)}`,
             ema7,
             ema99,
@@ -342,7 +352,7 @@ export async function getBinanceFuturesSignals(
       }
     }
 
-    const validSignals = results.filter((s): s is MASignal => s !== null);
+    const validSignals = results.filter((s): s is MASignal => s !== null && s.score >= 60);
 
     // Sort
     // Sort by Time (Newest First) as requested

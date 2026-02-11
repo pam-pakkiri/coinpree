@@ -85,6 +85,7 @@ export interface MASignal {
   ema7Prev: number;
   ema99Prev: number;
   crossoverStrength: number;
+  volatilityTooltip?: string;
 }
 
 // PRO API Configuration
@@ -94,7 +95,7 @@ const COINGECKO_API_BASE = IS_PRO
   ? "https://pro-api.coingecko.com/api/v3"
   : "https://api.coingecko.com/api/v3";
 const BINANCE_SPOT_BASE = "https://api.binance.com/api/v3";
-const CACHE_DURATION = 30000; // 30 seconds cache for PRO (more frequent updates)
+const CACHE_DURATION = 60000; // 60 seconds cache to save API calls
 
 // Quality filters for legitimate coins (PRO tier - stricter for futures trading)
 const MIN_MARKET_CAP = 50000000; // $50M minimum market cap (futures-grade)
@@ -191,6 +192,124 @@ function calculateEMA(prices: number[], period: number): number {
   }
 
   return ema;
+}
+
+
+function calculateATR(highs: number[], lows: number[], closes: number[], period: number = 14): number {
+  if (highs.length < period + 1) return 0;
+  const trs: number[] = [];
+  for (let i = 1; i < highs.length; i++) {
+    const high = highs[i];
+    const low = lows[i];
+    const prevClose = closes[i - 1];
+    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+    trs.push(tr);
+  }
+  if (trs.length < period) return 0;
+
+  let atr = trs.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < trs.length; i++) {
+    atr = ((atr * (period - 1)) + trs[i]) / period;
+  }
+  return atr;
+}
+
+export function calculateVolatilityScore(
+  dailyData: number[][] | null,
+  currentPrice: number,
+  volume24h: number,
+  change24h: number
+): { score: number; tooltip: string } {
+  if (!dailyData || dailyData.length < 21) {
+    return { score: 0, tooltip: "Insufficient Daily Data" };
+  }
+
+  // Extract daily arrays (last 30)
+  const days = dailyData;
+  const highs = days.map(d => d[2]);
+  const lows = days.map(d => d[3]);
+  const closes = days.map(d => d[4]);
+  const volumes = days.map(d => d[5]);
+
+  // 1. Daily Price Range %
+  const lastIdx = days.length - 1;
+  // Safety check
+  if (lastIdx < 0) return { score: 0, tooltip: "No data" };
+
+  const rangePct = closes[lastIdx] ? ((highs[lastIdx] - lows[lastIdx]) / closes[lastIdx]) * 100 : 0;
+  let rangeScore = 0;
+  if (rangePct < 1) rangeScore = 0;
+  else if (rangePct < 2) rangeScore = 0.5;
+  else if (rangePct < 4) rangeScore = 1;
+  else if (rangePct < 7) rangeScore = 1.5;
+  else if (rangePct < 10) rangeScore = 2;
+  else rangeScore = 2.5;
+
+  // 2. ATR Volatility %
+  const atr = calculateATR(highs, lows, closes, 14);
+  const atrPct = currentPrice ? (atr / currentPrice) * 100 : 0;
+  let atrScore = 0;
+  if (atrPct < 0.5) atrScore = 0;
+  else if (atrPct < 1) atrScore = 0.5;
+  else if (atrPct < 2) atrScore = 1;
+  else if (atrPct < 4) atrScore = 1.5;
+  else if (atrPct < 6) atrScore = 2;
+  else atrScore = 2.5;
+
+  // 3. Volume Spike
+  const currentVol = volume24h || volumes[lastIdx];
+  // Msg: "20-day Average Volume". We need history.
+  // We assume 'dailyData' has enough history.
+  // volumes[lastIdx] is current day (if candle closed? or ongoing?)
+  // If we fetched "1d", last candle is current day (accumulating).
+  // Previous 20 days: lastIdx-20 to lastIdx-1.
+  let avgVol = 0;
+  let volRatio = 1;
+  if (volumes.length > 21) {
+    const prev20Vols = volumes.slice(volumes.length - 21, volumes.length - 1);
+    if (prev20Vols.length > 0) {
+      avgVol = prev20Vols.reduce((a, b) => a + b, 0) / prev20Vols.length;
+      volRatio = avgVol > 0 ? currentVol / avgVol : 1;
+    }
+  }
+
+  let volScore = 0;
+  if (volRatio < 1) volScore = 0;
+  else if (volRatio < 1.5) volScore = 0.5;
+  else if (volRatio < 2) volScore = 1;
+  else if (volRatio < 3) volScore = 1.5;
+  else if (volRatio < 5) volScore = 2;
+  else volScore = 2.5;
+
+  // 4. Trend Speed %
+  const trendPct = Math.abs(change24h);
+  let trendScore = 0;
+  if (trendPct < 1) trendScore = 0;
+  else if (trendPct < 3) trendScore = 0.5;
+  else if (trendPct < 6) trendScore = 1;
+  else if (trendPct < 10) trendScore = 1.5;
+  else if (trendPct < 15) trendScore = 2;
+  else trendScore = 2.5;
+
+  // Final Score
+  let finalScore = rangeScore + atrScore + volScore + trendScore;
+  finalScore = Math.min(Math.max(finalScore, 0), 10);
+
+  // Interpretation
+  let interpretation = "Very Low";
+  if (finalScore >= 2) interpretation = "Low";
+  if (finalScore >= 4) interpretation = "Medium";
+  if (finalScore >= 6) interpretation = "High";
+  if (finalScore >= 8) interpretation = "Very High";
+  if (finalScore >= 10) interpretation = "Extreme";
+
+  const tooltip = `Score: ${finalScore.toFixed(1)}/10 (${interpretation})
+Price Range: ${rangePct.toFixed(2)}% (+${rangeScore})
+ATR Volatility: ${atrPct.toFixed(2)}% (+${atrScore})
+Volume Ratio: ${volRatio.toFixed(2)}x (+${volScore})
+Trend Speed: ${trendPct.toFixed(2)}% (+${trendScore})`;
+
+  return { score: finalScore, tooltip };
 }
 
 /**
@@ -345,7 +464,7 @@ export function detectCrossover(
 /**
  * Fetch top coins sorted by VOLUME (most liquid markets)
  */
-async function fetchTopCoins(): Promise<CoinGeckoMarketData[]> {
+export async function fetchTopCoins(): Promise<CoinGeckoMarketData[]> {
   const now = Date.now();
 
   if (
@@ -402,6 +521,14 @@ async function fetchTopCoins(): Promise<CoinGeckoMarketData[]> {
       const pageData = await response.json();
       allData.push(...pageData);
 
+      // Check if we've reached coins with volume < 100M
+      // Since API returns sorted by volume desc, we can stop early to save API calls
+      const lastCoin = pageData[pageData.length - 1];
+      if (lastCoin && Number(lastCoin.total_volume) < 100000000) {
+        console.log("Stopping fetch: Remaining coins have < $100M volume");
+        break;
+      }
+
       // Delay for rate limits
       if (page < pages.length) {
         await new Promise((resolve) => setTimeout(resolve, IS_PRO ? 50 : 500));
@@ -410,6 +537,10 @@ async function fetchTopCoins(): Promise<CoinGeckoMarketData[]> {
 
     // Apply filters
     const filteredData = allData.filter((coin) => {
+      // 0. Volume Filter (> 100M)
+      const vol = Number(coin.total_volume);
+      if (!vol || isNaN(vol) || vol < 100000000) return false;
+
       // 1. Exclude Known Stablecoins
       if (STABLECOINS.includes(coin.id)) return false;
 
@@ -508,7 +639,7 @@ const COINGECKO_TO_BINANCE: { [key: string]: string } = {
 /**
  * Fetch kline data from Binance Spot for a coin
  */
-async function fetchBinanceKlines(
+export async function fetchBinanceKlines(
   symbol: string,
   timeframe: string,
 ): Promise<number[][] | null> {
@@ -542,6 +673,7 @@ async function fetchBinanceKlines(
         parseFloat(k[2]), // high
         parseFloat(k[3]), // low
         parseFloat(k[4]), // close
+        parseFloat(k[5]), // volume
       ];
     });
 
@@ -623,9 +755,10 @@ async function fetchOHLCData(
     }
 
     // Convert to OHLC format
-    const ohlcData = data.prices.map((point: number[]) => {
+    const ohlcData = data.prices.map((point: number[], index: number) => {
       const [timestamp, price] = point;
-      return [timestamp, price, price, price, price];
+      const volume = data.total_volumes && data.total_volumes[index] ? data.total_volumes[index][1] : 0;
+      return [timestamp, price, price, price, price, volume];
     });
 
     ohlcCache.set(cacheKey, { data: ohlcData, timestamp: now });
@@ -782,8 +915,22 @@ async function processCoinWithOHLC(
     const crossoverStrength = (crossoverGap / ema99Current) * 100;
 
     // Calculate volatility from recent prices
-    const recentPrices = validPrices.slice(-30);
-    const volatility = calculateVolatility(recentPrices);
+    // Calculate volatility from recent prices
+    // Fetch Daily Data for Volatility Score (Hybrid/Binance)
+    let dailyData: number[][] | null = null;
+    try {
+      const binanceSymbol = COINGECKO_TO_BINANCE[coin.id] || (coin.symbol.toUpperCase() + "USDT");
+      dailyData = await fetchBinanceKlines(binanceSymbol, "1d");
+    } catch (e) { }
+
+    const volData = calculateVolatilityScore(dailyData, coin.current_price, coin.total_volume, coin.price_change_percentage_24h_in_currency || 0);
+    const volatility = volData.score;
+    // Store tooltip needed? Use formula field or new field? formula is limited length?
+    // We can append to formula or rely on frontend to display generic explanation, but specific values are lost.
+    // For now, store score. Frontend tooltips can calculate interpretations from score range.
+    // Or simpler: put detailed Breakdown in `formula` field?
+    // "Golden Cross | Vol: 8.5 (Extreme)"
+    const volFormula = `Vol: ${volData.score.toFixed(1)} (${volData.tooltip.split('(')[1].split(')')[0]})`;
 
     // Build signal name
     const signalName =
@@ -815,6 +962,20 @@ async function processCoinWithOHLC(
       (crossover.type === "SELL" && change24h > 5)
     ) {
       score -= 10; // Strong penalty for divergence
+    }
+
+    // Trend Alignment (EMA99 Slope - Proven Strategy)
+    // Check if long-term trend supports the crossover
+    if (ema99Array.length > 5) {
+      const current99 = ema99Array[ema99Array.length - 1];
+      const prev99 = ema99Array[ema99Array.length - 6]; // 5 candles ago
+      const slope = (current99 - prev99) / prev99;
+
+      if ((crossover.type === "BUY" && slope > 0) || (crossover.type === "SELL" && slope < 0)) {
+        score += 10; // Trend Confirmation
+      } else {
+        score -= 10; // Trend Contradiction (Counter-trend trade risk)
+      }
     }
 
     // Crossover strength bonus
@@ -902,7 +1063,8 @@ async function processCoinWithOHLC(
       entryPrice,
       stopLoss,
       takeProfit,
-      volatility: Math.round(volatility * 100) / 100,
+      volatility: volData.score, // Use calculated Score 0-10
+      volatilityTooltip: volData.tooltip,
       formula,
       ema7: ema7Current,
       ema99: ema99Current,
@@ -1203,10 +1365,10 @@ export async function calculateMACrossovers(
       `   ✅ Processed ${processedCount} coins, found data for ${successCount} coins`,
     );
 
-    // Filter valid signals
+    // Filter valid signals (Strong Quality >= 60)
     const signals: MASignal[] = [];
     for (const signal of results) {
-      if (signal) {
+      if (signal && signal.score >= 60) {
         signals.push(signal);
       }
     }
@@ -1472,4 +1634,25 @@ export function getBinanceCoinMapping(
   symbol: string,
 ): { id: string; image: string } | null {
   return BINANCE_TO_COINGECKO[symbol] || null;
+}
+
+/**
+ * Find coin metadata from verified CoinGecko cache by symbol
+ * Useful for enriching Binance Futures signals where we only have the symbol (e.g. "RIVER")
+ */
+export function findCoinMetadata(symbol: string): { id: string; name: string; image: string } | null {
+  if (!marketDataCache.data) return null;
+
+  // Try exact symbol match (case insensitive)
+  const coin = marketDataCache.data.find(c => c.symbol.toLowerCase() === symbol.toLowerCase());
+
+  if (coin) {
+    return {
+      id: coin.id,
+      name: coin.name,
+      image: coin.image
+    };
+  }
+
+  return null;
 }
