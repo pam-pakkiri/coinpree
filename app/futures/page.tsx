@@ -9,7 +9,7 @@ export default async function BinanceFuturesPage() {
     return (
         <SignalsTerminal
             title="EXCHANGE FUTURES MARKET"
-            description="Binance Futures Data"
+            description="Futures Data"
             fetchAction={getBinanceFuturesSignalsAction}
             initialData={initialSignals}
         />

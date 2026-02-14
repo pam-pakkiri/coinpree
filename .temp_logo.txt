@@ -1,0 +1,14 @@
+                    {/* CUSTOM BRAND MARK: COINPREE LOGO */}
+                    <div className="relative inline-flex items-center justify-center mb-4 group cursor-pointer">
+                        {/* 1. Behind Glow */}
+                        <div className="absolute inset-0 bg-indigo-500/20 blur-[25px] rounded-2xl opacity-30 group-hover:opacity-60 transition-all duration-500" />
+                        
+                        {/* 2. Logo Container */}
+                        <div className="relative z-10 w-14 h-14 rounded-2xl bg-white shadow-xl overflow-hidden transition-transform duration-300 group-hover:scale-105">
+                            <img 
+                                src="/logo.png" 
+                                alt="Coinpree Logo" 
+                                className="w-full h-full object-contain p-2"
+                            />
+                        </div>
+                    </div>

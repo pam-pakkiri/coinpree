@@ -10,12 +10,13 @@ import {
   Activity,
   TrendingUp,
   BarChart3,
+  LogOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getMarketSnapshot } from "@/app/actions";
 import { cn } from "@/lib/utils";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 // ... imports
 
@@ -24,6 +25,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = React.useState(false);
   const [snapshot, setSnapshot] = React.useState<any>(null);
   const pathname = usePathname();
+  const router = useRouter();
+
+  const handleLogout = () => {
+    localStorage.removeItem("coinpree_auth");
+    router.push("/login");
+  };
 
   React.useEffect(() => {
     setMounted(true);
@@ -36,14 +43,25 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     return () => clearInterval(interval);
   }, []);
 
+  // Check if we are on the login page
+  if (pathname === "/login") {
+    return (
+      <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden font-sans">
+        <main className="flex-1 w-full h-full">
+          {children}
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden font-sans">
       {/* Top Bar */}
       <header className="h-[52px] border-b border-border bg-[var(--header-bg)] flex items-center px-6 z-50 shrink-0 transition-colors duration-200">
         {/* Logo Area */}
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center text-white shrink-0 shadow-lg shadow-primary/20">
-            <Zap className="w-5 h-5 fill-current" />
+          <div className="w-9 h-9 rounded-lg bg-black flex items-center justify-center shrink-0 shadow-md">
+            <img src="/coinpree.png" alt="Coinpree" className="w-full h-full object-contain " />
           </div>
           <div className="flex flex-col">
             <span className="font-black text-[var(--header-text)] text-[18px] tracking-tight leading-none">
@@ -86,6 +104,32 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               Exchange Futures Market
             </Button>
           </Link>
+          <Link href="/advanced-signals">
+            <Button
+              variant={pathname === "/advanced-signals" ? "secondary" : "ghost"}
+              className={cn(
+                "h-8 text-[12px] font-bold px-3",
+                pathname === "/advanced-signals"
+                  ? "bg-primary/10 text-primary hover:bg-primary/15"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              Advanced Signals
+            </Button>
+          </Link>
+          <Link href="/short-reversal">
+            <Button
+              variant={pathname === "/short-reversal" ? "secondary" : "ghost"}
+              className={cn(
+                "h-8 text-[12px] font-bold px-3",
+                pathname === "/short-reversal"
+                  ? "bg-primary/10 text-primary hover:bg-primary/15"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              Short Reversal
+            </Button>
+          </Link>
         </div>
 
         {/* Search */}
@@ -116,6 +160,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </Button>
 
           <div className="h-8 w-px bg-border mx-2" />
+
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 text-red-500 hover:text-red-600 hover:bg-red-500/10 rounded-lg transition-colors"
+            onClick={handleLogout}
+            title="Logout"
+          >
+            <LogOut size={18} />
+          </Button>
         </div>
       </header >
 
@@ -162,6 +216,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <TrendingUp size={20} className={cn(pathname === "/futures" && "fill-current")} />
           </div>
           <span className={cn("text-[10px] font-bold", pathname === "/futures" ? "text-primary" : "text-muted-foreground")}>Futures Market</span>
+        </Link>
+
+        <Link href="/advanced-signals" className="flex flex-col items-center gap-1 w-full h-full justify-center">
+          <div className={cn("p-1.5 rounded-lg transition-colors", pathname === "/advanced-signals" ? "bg-primary/10 text-primary" : "text-muted-foreground")}>
+            <Zap size={20} className={cn(pathname === "/advanced-signals" && "fill-current")} />
+          </div>
+          <span className={cn("text-[10px] font-bold", pathname === "/advanced-signals" ? "text-primary" : "text-muted-foreground")}>Advanced Signals</span>
         </Link>
 
         <Link href="/settings" className="flex flex-col items-center gap-1 w-full h-full justify-center opacity-50 pointer-events-none">

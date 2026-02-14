@@ -1,6 +1,7 @@
 // CoinGecko API Service - Hybrid Approach
 // Uses CoinGecko PRO API for coin discovery + Binance Spot klines for accurate MA crossover detection
 // Fast and reliable - combines both data sources
+import db from "@/lib/db";
 
 interface CoinGeckoMarketData {
   id: string;
@@ -219,9 +220,9 @@ export function calculateVolatilityScore(
   currentPrice: number,
   volume24h: number,
   change24h: number
-): { score: number; tooltip: string } {
+): { score: number; tooltip: string; interpretation: string } {
   if (!dailyData || dailyData.length < 21) {
-    return { score: 0, tooltip: "Insufficient Daily Data" };
+    return { score: 0, tooltip: "Insufficient Daily Data", interpretation: "No Data" };
   }
 
   // Extract daily arrays (last 30)
@@ -234,7 +235,7 @@ export function calculateVolatilityScore(
   // 1. Daily Price Range %
   const lastIdx = days.length - 1;
   // Safety check
-  if (lastIdx < 0) return { score: 0, tooltip: "No data" };
+  if (lastIdx < 0) return { score: 0, tooltip: "No data", interpretation: "No Data" };
 
   const rangePct = closes[lastIdx] ? ((highs[lastIdx] - lows[lastIdx]) / closes[lastIdx]) * 100 : 0;
   let rangeScore = 0;
@@ -309,7 +310,7 @@ ATR Volatility: ${atrPct.toFixed(2)}% (+${atrScore})
 Volume Ratio: ${volRatio.toFixed(2)}x (+${volScore})
 Trend Speed: ${trendPct.toFixed(2)}% (+${trendScore})`;
 
-  return { score: finalScore, tooltip };
+  return { score: finalScore, tooltip, interpretation };
 }
 
 /**
@@ -467,14 +468,30 @@ export function detectCrossover(
 export async function fetchTopCoins(): Promise<CoinGeckoMarketData[]> {
   const now = Date.now();
 
-  if (
-    marketDataCache.data &&
-    now - marketDataCache.timestamp < CACHE_DURATION
-  ) {
-    console.log(`✅ Using cached market data`);
-    return marketDataCache.data;
+  // 1. Check DB for fresh data
+  try {
+    // Get the most recent update timestamp
+    const lastUpdateResult = db.prepare('SELECT MAX(updated_at) as last_update FROM coins').get() as { last_update: number };
+    const lastUpdate = lastUpdateResult?.last_update || 0;
+
+    // Utilize cache if data is fresh (less than 1 min old)
+    if (lastUpdate > 0 && now - lastUpdate < CACHE_DURATION) {
+      console.log(`✅ Using cached market data from SQLite DB (Age: ${((now - lastUpdate) / 1000).toFixed(1)}s)`);
+      const rows = db.prepare('SELECT * FROM coins ORDER BY market_cap_rank ASC').all();
+
+      // Map back to interface
+      return rows.map((row: any) => ({
+        ...row,
+        sparkline_in_7d: row.sparkline_in_7d ? JSON.parse(row.sparkline_in_7d) : undefined,
+        tradeable_on_binance: !!row.tradeable_on_binance,
+        tradeable_on_bybit: !!row.tradeable_on_bybit
+      })) as CoinGeckoMarketData[];
+    }
+  } catch (error) {
+    console.error("⚠️ Error checking SQLite cache:", error);
   }
 
+  // 2. Fetch from API if cache is stale
   try {
     console.log(
       `🔄 Fetching top coins by VOLUME from CoinGecko ${IS_PRO ? "PRO" : "FREE"} API...`,
@@ -503,8 +520,8 @@ export async function fetchTopCoins(): Promise<CoinGeckoMarketData[]> {
 
     for (const page of pages) {
       const url = IS_PRO
-        ? `${COINGECKO_API_BASE}/coins/markets?vs_currency=usd&order=volume_desc&per_page=${perPage}&page=${page}&price_change_percentage=1h,24h,7d&precision=full`
-        : `${COINGECKO_API_BASE}/coins/markets?vs_currency=usd&order=volume_desc&per_page=${perPage}&page=${page}&price_change_percentage=1h,24h,7d`;
+        ? `${COINGECKO_API_BASE}/coins/markets?vs_currency=usd&order=volume_desc&per_page=${perPage}&page=${page}&price_change_percentage=1h,24h,7d&precision=full&sparkline=true`
+        : `${COINGECKO_API_BASE}/coins/markets?vs_currency=usd&order=volume_desc&per_page=${perPage}&page=${page}&price_change_percentage=1h,24h,7d&sparkline=true`;
 
       const response = await fetch(url, { headers });
 
@@ -513,6 +530,19 @@ export async function fetchTopCoins(): Promise<CoinGeckoMarketData[]> {
           `⚠️ CoinGecko API returned ${response.status} for page ${page}`,
         );
         if (page === 1) {
+          // If API fails, try to return whatever is in DB even if stale
+          try {
+            const rows = db.prepare('SELECT * FROM coins ORDER BY market_cap_rank ASC').all();
+            if (rows.length > 0) {
+              console.log("⚠️ Returning stale data from DB due to API error");
+              return rows.map((row: any) => ({
+                ...row,
+                sparkline_in_7d: row.sparkline_in_7d ? JSON.parse(row.sparkline_in_7d) : undefined,
+                tradeable_on_binance: !!row.tradeable_on_binance,
+                tradeable_on_bybit: !!row.tradeable_on_bybit
+              })) as CoinGeckoMarketData[];
+            }
+          } catch (e) { }
           return marketDataCache.data || [];
         }
         break;
@@ -544,16 +574,13 @@ export async function fetchTopCoins(): Promise<CoinGeckoMarketData[]> {
       // 1. Exclude Known Stablecoins
       if (STABLECOINS.includes(coin.id)) return false;
 
-      // 2. Exclude " pegged" assets roughly (optional heuristics)
-      // If name contains "USD" and price is ~1.0, exclude? 
-      // Safer to rely on manual list + major coins pattern.
+      // 2. Exclude " pegged" assets roughly
       if (coin.symbol.toUpperCase().endsWith('USD') || coin.name.includes('USD')) {
-        // Check if price is close to 1
         if (Math.abs(coin.current_price - 1) < 0.1) return false;
       }
 
       // 3. Minimum Volume (liquidity check)
-      if (!coin.total_volume || coin.total_volume < 100000) { // Reduced to $100k to catch smaller movers
+      if (!coin.total_volume || coin.total_volume < 100000) {
         return false;
       }
 
@@ -564,6 +591,66 @@ export async function fetchTopCoins(): Promise<CoinGeckoMarketData[]> {
 
       return true;
     });
+
+    // 3. Update DB with fresh data
+    try {
+      const stmt = db.prepare(`
+        INSERT OR REPLACE INTO coins (
+            id, symbol, name, image, current_price, market_cap, market_cap_rank, total_volume,
+            price_change_percentage_1h_in_currency, price_change_percentage_24h_in_currency, price_change_percentage_7d_in_currency,
+            circulating_supply, total_supply, max_supply, ath, ath_change_percentage, ath_date,
+            atl, atl_change_percentage, atl_date, last_updated, sparkline_in_7d, tradeable_on_binance, tradeable_on_bybit, updated_at
+        ) VALUES (
+            @id, @symbol, @name, @image, @current_price, @market_cap, @market_cap_rank, @total_volume,
+            @price_change_percentage_1h_in_currency, @price_change_percentage_24h_in_currency, @price_change_percentage_7d_in_currency,
+            @circulating_supply, @total_supply, @max_supply, @ath, @ath_change_percentage, @ath_date,
+            @atl, @atl_change_percentage, @atl_date, @last_updated, @sparkline_in_7d, @tradeable_on_binance, @tradeable_on_bybit, @updated_at
+        )
+      `);
+
+      const insertMany = db.transaction((coins: CoinGeckoMarketData[]) => {
+        // Optional: Clear old data? 
+        // db.prepare('DELETE FROM coins').run(); // Or keep accumulation and rely on REPLACE
+        // Let's keep accumulation but maybe clean up very old records later. 
+        // For now, REPLACE is fine.
+
+        for (const coin of coins) {
+          stmt.run({
+            id: coin.id,
+            symbol: coin.symbol,
+            name: coin.name,
+            image: coin.image,
+            current_price: coin.current_price,
+            market_cap: coin.market_cap,
+            market_cap_rank: coin.market_cap_rank,
+            total_volume: coin.total_volume,
+            price_change_percentage_1h_in_currency: coin.price_change_percentage_1h_in_currency,
+            price_change_percentage_24h_in_currency: coin.price_change_percentage_24h_in_currency,
+            price_change_percentage_7d_in_currency: coin.price_change_percentage_7d_in_currency,
+            circulating_supply: coin.circulating_supply,
+            total_supply: coin.total_supply,
+            max_supply: coin.max_supply,
+            ath: coin.ath,
+            ath_change_percentage: coin.ath_change_percentage,
+            ath_date: coin.ath_date,
+            atl: coin.atl,
+            atl_change_percentage: coin.atl_change_percentage,
+            atl_date: coin.atl_date,
+            last_updated: coin.last_updated,
+            sparkline_in_7d: coin.sparkline_in_7d ? JSON.stringify(coin.sparkline_in_7d) : null,
+            tradeable_on_binance: coin.tradeable_on_binance ? 1 : 0,
+            tradeable_on_bybit: coin.tradeable_on_bybit ? 1 : 0,
+            updated_at: now
+          });
+        }
+      });
+
+      insertMany(filteredData);
+      console.log(`💾 Saved ${filteredData.length} coins to SQLite DB`);
+
+    } catch (dbError) {
+      console.error("❌ Failed to save to DB:", dbError);
+    }
 
     marketDataCache = {
       data: filteredData,
@@ -589,6 +676,18 @@ export async function fetchTopCoins(): Promise<CoinGeckoMarketData[]> {
     return filteredData;
   } catch (error) {
     console.error("❌ Error fetching coins:", error);
+    // Fallback to DB
+    try {
+      const rows = db.prepare('SELECT * FROM coins ORDER BY market_cap_rank ASC').all();
+      if (rows.length > 0) {
+        return rows.map((row: any) => ({
+          ...row,
+          sparkline_in_7d: row.sparkline_in_7d ? JSON.parse(row.sparkline_in_7d) : undefined,
+          tradeable_on_binance: !!row.tradeable_on_binance,
+          tradeable_on_bybit: !!row.tradeable_on_bybit
+        })) as CoinGeckoMarketData[];
+      }
+    } catch (e) { }
     return marketDataCache.data || [];
   }
 }
@@ -930,7 +1029,7 @@ async function processCoinWithOHLC(
     // For now, store score. Frontend tooltips can calculate interpretations from score range.
     // Or simpler: put detailed Breakdown in `formula` field?
     // "Golden Cross | Vol: 8.5 (Extreme)"
-    const volFormula = `Vol: ${volData.score.toFixed(1)} (${volData.tooltip.split('(')[1].split(')')[0]})`;
+    const volFormula = `Vol: ${volData.score.toFixed(1)} (${volData.interpretation || "N/A"})`;
 
     // Build signal name
     const signalName =
@@ -1455,8 +1554,17 @@ export async function refreshMarketData(
   timeframe: string = "1h",
 ): Promise<MASignal[]> {
   console.log("🔄 Force refreshing market data...");
+  // Invalidate in-memory cache
   marketDataCache = { data: null, timestamp: 0 };
   signalsCache.clear();
+
+  // Invalidate DB cache
+  try {
+    db.prepare('UPDATE coins SET updated_at = 0').run();
+  } catch (e) {
+    console.error("Failed to invalidate DB cache", e);
+  }
+
   return calculateMACrossovers(timeframe);
 }
 

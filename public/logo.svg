@@ -1,0 +1,28 @@
+<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Dark Navy C with diagonal slash -->
+  <g>
+    <!-- The 'C' Shape -->
+    <path d="M 140 50 
+             C 120 35 100 30 75 30 
+             C 40 30 15 55 15 100 
+             C 15 145 40 170 75 170 
+             C 100 170 120 165 140 150
+             L 140 125
+             C 120 135 100 140 75 140
+             C 55 140 40 125 40 100
+             C 40 75 55 60 75 60
+             C 100 60 120 65 140 75
+             Z" 
+          fill="#1e293b"
+          stroke="#1e293b"
+          stroke-width="8"
+    />
+    
+    <!-- Diagonal Slash -->
+    <line x1="45" y1="155" x2="155" y2="45" 
+          stroke="#1e293b" 
+          stroke-width="20" 
+          stroke-linecap="round"
+    />
+  </g>
+</svg>

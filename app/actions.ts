@@ -6,6 +6,8 @@ import {
   refreshMarketData,
 } from "@/lib/services/coingecko";
 import type { MASignal } from "@/lib/services/coingecko";
+import { getAdvancedSignalsAction as getAdvancedSignalsService } from "@/lib/services/advanced-algo";
+import { scanShortReversalSignals } from "@/lib/services/short-reversal";
 
 /**
  * Get market snapshot data
@@ -144,4 +146,12 @@ export async function getBinanceFuturesSignalsAction(timeframe: string = "1h") {
     console.error("Error fetching Binance signals:", error);
     return [];
   }
+}
+
+export async function getAdvancedSignalsAction(exchangeId?: string, timeframe: string = "15m") {
+  return await getAdvancedSignalsService(exchangeId, timeframe);
+}
+
+export async function getShortReversalSignalsAction() {
+  return await scanShortReversalSignals();
 }

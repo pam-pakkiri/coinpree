@@ -1,0 +1,61 @@
+import Database from 'better-sqlite3';
+import path from 'path';
+
+// Singleton for database connection to prevent multiple connections in dev
+let db: Database.Database;
+
+const dbPath = path.join(process.cwd(), 'coinpree.db');
+
+// Initialize DB
+try {
+    if (process.env.NODE_ENV === 'production') {
+        db = new Database(dbPath);
+    } else {
+        // In development mode, use a global variable so that the value
+        // is preserved across module reloads caused by HMR (Hot Module Replacement).
+        if (!(global as any).db) {
+            (global as any).db = new Database(dbPath);
+        }
+        db = (global as any).db;
+    }
+
+    // Create tables if they don't exist
+    // Added basic columns for CoinGecko market data
+    db.exec(`
+    CREATE TABLE IF NOT EXISTS coins (
+      id TEXT PRIMARY KEY,
+      symbol TEXT,
+      name TEXT,
+      image TEXT,
+      current_price REAL,
+      market_cap REAL,
+      market_cap_rank INTEGER,
+      total_volume REAL,
+      price_change_percentage_1h_in_currency REAL,
+      price_change_percentage_24h_in_currency REAL,
+      price_change_percentage_7d_in_currency REAL,
+      circulating_supply REAL,
+      total_supply REAL,
+      max_supply REAL,
+      ath REAL,
+      ath_change_percentage REAL,
+      ath_date TEXT,
+      atl REAL,
+      atl_change_percentage REAL,
+      atl_date TEXT,
+      last_updated TEXT,
+      sparkline_in_7d TEXT,
+      tradeable_on_binance INTEGER,
+      tradeable_on_bybit INTEGER,
+      updated_at INTEGER
+    );
+  `);
+
+    console.log('✅ SQLite Database initialized at ' + dbPath);
+} catch (error) {
+    console.error('❌ Failed to initialize SQLite database:', error);
+    // Fallback to in-memory DB if file access fails (unlikely)
+    db = new Database(':memory:');
+}
+
+export default db;

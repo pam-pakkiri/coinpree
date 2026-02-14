@@ -8,7 +8,7 @@ export default async function ExchangeFuturesPage() {
   return (
     <SignalsTerminal
       title="EXCHANGE FUTURES"
-      description="CoinGecko Market Data"
+      description="Market Data"
       fetchAction={getMACrossoverSignals}
       initialData={initialSignals}
     />
