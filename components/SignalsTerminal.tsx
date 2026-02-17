@@ -23,7 +23,11 @@ import {
   ArrowUpDown,
   RefreshCw,
   HelpCircle,
+  Clock,
+  Bell,
+  BellOff,
 } from "lucide-react";
+import { useAlertSystem } from "@/lib/hooks/useAlertSystem";
 import { cn } from "@/lib/utils";
 import {
   Table,
@@ -80,6 +84,9 @@ export interface SignalData {
   };
   name?: string;
   image?: string;
+  // Tracking Metadata
+  firstSeen?: number;
+  lastUpdate?: number;
 }
 
 const FormatPercent = ({ val }: { val: number }) => {
@@ -119,10 +126,12 @@ const SignalRow = memo(
     coin,
     index,
     isNew = false,
+    firstSeen,
   }: {
     coin: SignalData;
     index: number;
     isNew?: boolean;
+    firstSeen?: number;
   }) => {
     const isBuy = coin.signalType === "BUY";
     const isSell = coin.signalType === "SELL";
@@ -225,9 +234,29 @@ const SignalRow = memo(
               {coin.signalName.replace(/\s*\(.*?\)/g, "")}
             </span>
 
-            <span className="text-[10px] text-muted-foreground font-mono bg-muted/50 px-1.5 py-0.5 rounded">
-              {crossoverTime}
-            </span>
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] text-muted-foreground font-mono bg-muted/50 px-1.5 py-0.5 rounded flex items-center gap-1 w-fit">
+                {crossoverTime}
+              </span>
+              <div className="flex flex-col text-[9px] text-muted-foreground/70 font-medium">
+                {/* @ts-ignore */}
+                {coin.firstSeen && (
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-2.5 h-2.5 opacity-50" />
+                    First: {new Date(coin.firstSeen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                )}
+                {/* @ts-ignore */}
+                {coin.lastUpdate && coin.firstSeen &&
+                  new Date(coin.lastUpdate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) !==
+                  new Date(coin.firstSeen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) && (
+                    <span className="flex items-center gap-1">
+                      <RefreshCw className="w-2.5 h-2.5 opacity-50" />
+                      Update: {new Date(coin.lastUpdate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  )}
+              </div>
+            </div>
           </div>
         </TableCell>
 
@@ -430,6 +459,7 @@ function SignalsTerminal({
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
   const [newSignalIds, setNewSignalIds] = useState<Set<string>>(new Set());
   const [signalHistory, setSignalHistory] = useState<Map<string, number>>(new Map());
+  const { enabled: alertsEnabled, toggleAlerts, triggerAlert } = useAlertSystem();
 
   // Timeframe
   const [timeframe, setTimeframe] = useState("1h");
@@ -513,6 +543,7 @@ function SignalsTerminal({
       if (isInitialLoad) {
         setLoading(true);
       } else {
+        if (document.hidden && !alertsEnabled) return; // Skip background scans unless alerts are on
         setRefreshing(true);
       }
 
@@ -525,78 +556,44 @@ function SignalsTerminal({
         return;
       }
 
-      setSignals((prevSignals) => {
-        if (isInitialLoad) {
-          // Initial load: keep existing if any? No, replace for now or maybe merge?
-          // If we want to keep "all appeared today", we should merge.
-          // But on initial load (page refresh), we don't have prevSignals.
-          return newData;
-        }
+      const now = Date.now();
+      const existingSignals = new Map<string, SignalData>();
+      signals.forEach(s => existingSignals.set(`${s.coinId}-${s.signalType}`, s));
 
-        // Incremental update: Merge new data into existing signals based on Event ID
-        // Event ID = Coin + Signal Type + Crossover Timestamp (which is now stable candle time)
+      const newIds = new Set<string>();
+      const updatedSignals: SignalData[] = newData.map(s => {
+        const key = `${s.coinId}-${s.signalType}`;
+        const existing = existingSignals.get(key);
+        if (!existing) newIds.add(key);
 
-        // Map of new data for quick lookup and tracking "new" signals
-        const newDataMap = new Map<string, SignalData>();
-        newData.forEach((s) => {
-          const key = `${s.coinId}-${s.signalType}-${s.crossoverTimestamp}`;
-          newDataMap.set(key, s);
-        });
-
-        // 1. Update existing signals with fresh data (price, score, volatility, etc.)
-        const updatedPrevSignals = prevSignals.map((prevSig) => {
-          const key = `${prevSig.coinId}-${prevSig.signalType}-${prevSig.crossoverTimestamp}`;
-          if (newDataMap.has(key)) {
-            // Found fresh data for this exact event!
-            const freshSig = newDataMap.get(key)!;
-            newDataMap.delete(key); // Mark as consumed so we know it's not "new"
-            return freshSig; // Use fresh data (updated price/score) but same event ID
-          }
-          return prevSig; // Keep old data if not present in this fetch (e.g. dropped out of top list)
-        });
-
-        // 2. Identify TRULY new signals (remaining in map)
-        const truelyNewSignals = Array.from(newDataMap.values());
-
-        if (truelyNewSignals.length > 0) {
-          console.log(`🆕 ${truelyNewSignals.length} new signals detected!`, truelyNewSignals.map(s => s.symbol));
-
-          // Mark these signals as new
-          const newIds = new Set(truelyNewSignals.map(s => `${s.coinId}-${s.timestamp}`));
-          setNewSignalIds(newIds);
-
-          // Track in history
-          setSignalHistory((prevHistory) => {
-            const newHistory = new Map(prevHistory);
-            truelyNewSignals.forEach((sig) => {
-              const key = `${sig.coinId}-${sig.signalType}`;
-              // Update strictly if newer
-              newHistory.set(key, Date.now());
-            });
-
-            // Save to localStorage
-            try {
-              const historyObj = Object.fromEntries(newHistory);
-              localStorage.setItem('coinpree_signal_history', JSON.stringify(historyObj));
-            } catch (error) {
-              console.warn('Error saving signal history:', error);
-            }
-
-            return newHistory;
-          });
-
-          // Clear the "new" marker after 5 seconds
-          setTimeout(() => {
-            setNewSignalIds(new Set());
-          }, 5000);
-
-          // Add new signals to the TOP
-          return [...truelyNewSignals, ...updatedPrevSignals];
-        }
-
-        // No new signals, but return updated list (prices/scores might have changed)
-        return updatedPrevSignals;
+        return {
+          ...s,
+          firstSeen: existing?.firstSeen || s.crossoverTimestamp || s.timestamp || now,
+          lastUpdate: now
+        };
       });
+
+      // Merge updated signals back into the main list
+      updatedSignals.forEach(s => existingSignals.set(`${s.coinId}-${s.signalType}`, s));
+      const finalSignals = Array.from(existingSignals.values()).sort((a, b) => b.timestamp - a.timestamp);
+
+      setSignals(finalSignals);
+
+      if (newIds.size > 0) {
+        setNewSignalIds(new Set(Array.from(newIds).map(id => `${id}-${now}`)));
+        setTimeout(() => setNewSignalIds(new Set()), 5000);
+
+        if (!isInitialLoad) {
+          const firstNew = updatedSignals.find(s => newIds.has(`${s.coinId}-${s.signalType}`));
+          if (firstNew) {
+            console.log(`🔔 Alert triggering for ${firstNew.symbol}`);
+            triggerAlert(
+              `New Signal: ${firstNew.symbol}`,
+              `${firstNew.signalType} setup detected at $${firstNew.currentPrice.toFixed(4)}`
+            );
+          }
+        }
+      }
 
       setLastUpdate(new Date());
     } catch (err) {
@@ -697,6 +694,16 @@ function SignalsTerminal({
                 size={14}
                 className={cn(refreshing && "animate-spin")}
               />
+            </Button>
+
+            <Button
+              variant={alertsEnabled ? "default" : "outline"}
+              size="sm"
+              onClick={toggleAlerts}
+              className={cn("h-8 gap-2 shrink-0 font-bold text-[11px]", alertsEnabled ? "bg-primary/20 text-primary border-primary/50 hover:bg-primary/30" : "")}
+            >
+              {alertsEnabled ? <Bell size={14} className="fill-current" /> : <BellOff size={14} />}
+              <span className="hidden sm:inline">ALERTS</span>
             </Button>
           </div>
         </div>
@@ -945,14 +952,21 @@ function SignalsTerminal({
                       </div>
                       <div className="flex flex-col gap-1 items-end">
                         <span className="text-[10px] text-muted-foreground font-bold uppercase">Detected</span>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex flex-col items-end gap-1">
                           <Badge variant="outline" className="text-[10px] font-mono font-bold text-foreground border-border/50 bg-background/50" suppressHydrationWarning>
                             {typeof window !== 'undefined' && new Date(coin.crossoverTimestamp || coin.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                           </Badge>
+                          <div className="flex flex-col items-end text-[9px] text-muted-foreground/60">
+                            {/* @ts-ignore */}
+                            {coin.firstSeen && (
+                              <span>First: {new Date(coin.firstSeen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            )}
+                            {/* @ts-ignore */}
+                            {coin.lastUpdate && (
+                              <span>Update: {new Date(coin.lastUpdate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            )}
+                          </div>
                         </div>
-                        <span className="text-[10px] text-muted-foreground font-medium">
-                          {coin.candlesAgo === 0 ? "Just now" : `${coin.candlesAgo} candles ago`}
-                        </span>
                       </div>
                     </div>
 
@@ -1020,6 +1034,7 @@ function SignalsTerminal({
                         coin={coin}
                         index={indexOfFirstItem + idx}
                         isNew={isNew}
+                        firstSeen={signalHistory.get(`${coin.coinId}-${coin.signalType}`)}
                       />
                     );
                   })}

@@ -8,20 +8,20 @@ const dbPath = path.join(process.cwd(), 'coinpree.db');
 
 // Initialize DB
 try {
-    if (process.env.NODE_ENV === 'production') {
-        db = new Database(dbPath);
-    } else {
-        // In development mode, use a global variable so that the value
-        // is preserved across module reloads caused by HMR (Hot Module Replacement).
-        if (!(global as any).db) {
-            (global as any).db = new Database(dbPath);
-        }
-        db = (global as any).db;
+  if (process.env.NODE_ENV === 'production') {
+    db = new Database(dbPath);
+  } else {
+    // In development mode, use a global variable so that the value
+    // is preserved across module reloads caused by HMR (Hot Module Replacement).
+    if (!(global as any).db) {
+      (global as any).db = new Database(dbPath);
     }
+    db = (global as any).db;
+  }
 
-    // Create tables if they don't exist
-    // Added basic columns for CoinGecko market data
-    db.exec(`
+  // Create tables if they don't exist
+  // Added basic columns for CoinGecko market data
+  db.exec(`
     CREATE TABLE IF NOT EXISTS coins (
       id TEXT PRIMARY KEY,
       symbol TEXT,
@@ -49,13 +49,29 @@ try {
       tradeable_on_bybit INTEGER,
       updated_at INTEGER
     );
+
+    CREATE TABLE IF NOT EXISTS price_history (
+      coin_id TEXT,
+      price REAL,
+      timestamp INTEGER,
+      PRIMARY KEY (coin_id, timestamp)
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      email TEXT UNIQUE,
+      password TEXT,
+      image TEXT,
+      created_at INTEGER
+    );
   `);
 
-    console.log('✅ SQLite Database initialized at ' + dbPath);
+  console.log('✅ SQLite Database initialized at ' + dbPath);
 } catch (error) {
-    console.error('❌ Failed to initialize SQLite database:', error);
-    // Fallback to in-memory DB if file access fails (unlikely)
-    db = new Database(':memory:');
+  console.error('❌ Failed to initialize SQLite database:', error);
+  // Fallback to in-memory DB if file access fails (unlikely)
+  db = new Database(':memory:');
 }
 
 export default db;

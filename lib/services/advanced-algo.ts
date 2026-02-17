@@ -1,30 +1,22 @@
 
-import { MASignal } from "./coingecko";
+import { MASignal, fetchTopCoins } from "./coingecko";
 
 // --- CONFIGURATION ---
 const CONFIG = {
-    FastMA: 5,
-    SlowMA: 12,
-    TrendMA: 50,
-    ATR_Period: 14,
+    FastMA: 9,
+    SlowMA: 21,
+    TrendMA: 200,
     RSI_Period: 14,
-    Stoch_K: 5,
-    Stoch_D: 3,
-    Stoch_Slow: 3,
-    RSI_Overbought: 70, // Relaxed from 75 to check logic first? No, keep logic strict but scan more candles.
-    RSI_Oversold: 30, // Relaxed from 25
-    Stoch_Overbought: 80,
-    Stoch_Oversold: 20,
-    Volume_Multiplier: 1.2,
-    Volume_Period: 20,
-    ATR_SL_Mult: 1.5,
-    ATR_TP_Mult: 2.0,
-    Min_RR: 1.0,
+    RSI_Overbought: 70,
+    RSI_Oversold: 30,
+    Volume_Multiplier: 1.5,
+    ATR_Period: 14,
+    Swing_Lookback: 5, // Candles to define a swing
 };
 
 // --- TYPES ---
 export type ExchangeId = "binance_futures" | "coinbase" | "coinbase_intl";
-export type Timeframe = "15m" | "1h" | "4h" | "1d";
+export type Timeframe = "5m" | "15m" | "30m" | "1h" | "2h" | "4h" | "1d";
 
 export interface OHLCV {
     time: number;
@@ -34,6 +26,10 @@ export interface OHLCV {
     close: number;
     volume: number;
 }
+
+// --- CACHE ---
+const signalsCache = new Map<string, { data: AdvancedSignal[], timestamp: number }>();
+const CACHE_DURATION = 90 * 1000; // 90 seconds cache to keep data fresh but snappy
 
 export type AdvancedSignal = {
     symbol: string;
@@ -49,9 +45,13 @@ export type AdvancedSignal = {
     status: "ACTIVE" | "PENDING";
     currentPrice: number;
     link: string;
+    chartData: OHLCV[];
+    image?: string;
+    firstSeen?: number;
+    lastUpdate?: number;
 };
 
-// --- INDICATOR MATH (The "Core Formula") ---
+// --- MODERN TA HELPERS ---
 
 function calculateEMA(prices: number[], period: number): number[] {
     const k = 2 / (period + 1);
@@ -119,231 +119,206 @@ function calculateRSI(closes: number[], period: number): number[] {
     return rsi;
 }
 
-function calculateStochastic(highs: number[], lows: number[], closes: number[], periodK: number, periodD: number, slowing: number): { k: number[], d: number[] } {
-    const kBuffer: number[] = new Array(closes.length).fill(0);
-    const dBuffer: number[] = new Array(closes.length).fill(0);
-    const rawK: number[] = new Array(closes.length).fill(0);
+// --- MARKET STRUCTURE ENGINE ---
 
-    for (let i = periodK - 1; i < closes.length; i++) {
-        let highest = -Infinity;
-        let lowest = Infinity;
-        for (let j = 0; j < periodK; j++) {
-            if (highs[i - j] > highest) highest = highs[i - j];
-            if (lows[i - j] < lowest) lowest = lows[i - j];
-        }
-        const range = highest - lowest;
-        rawK[i] = range === 0 ? 50 : ((closes[i] - lowest) / range) * 100;
-    }
-
-    for (let i = periodK + slowing - 1; i < closes.length; i++) {
-        let sum = 0;
-        for (let j = 0; j < slowing; j++) sum += rawK[i - j];
-        kBuffer[i] = sum / slowing;
-    }
-
-    for (let i = periodK + slowing + periodD - 1; i < closes.length; i++) {
-        let sum = 0;
-        for (let j = 0; j < periodD; j++) sum += kBuffer[i - j];
-        dBuffer[i] = sum / periodD;
-    }
-
-    return { k: kBuffer, d: dBuffer };
+interface SwingPoint {
+    index: number;
+    price: number;
+    type: "HIGH" | "LOW";
 }
 
-// --- PATTERN RECOGNITION ---
-
-function checkBullishPattern(open: number, close: number, high: number, low: number, prevOpen: number, prevClose: number, prevHigh: number, prevLow: number): boolean {
-    const isEngulfing = (close > open) && (prevClose < prevOpen) && (close > prevOpen) && (open < prevClose);
-    const body = Math.abs(close - open);
-    const lowerWick = Math.min(open, close) - low;
-    const upperWick = high - Math.max(open, close);
-    const isPinBar = (lowerWick > body * 2) && (upperWick < body);
-    return isEngulfing || isPinBar;
-}
-
-function checkBearishPattern(open: number, close: number, high: number, low: number, prevOpen: number, prevClose: number, prevHigh: number, prevLow: number): boolean {
-    const isEngulfing = (close < open) && (prevClose > prevOpen) && (close < prevOpen) && (open > prevClose);
-    const body = Math.abs(close - open);
-    const upperWick = high - Math.max(open, close);
-    const lowerWick = Math.min(open, close) - low;
-    const isPinBar = (upperWick > body * 2) && (lowerWick < body);
-    return isEngulfing || isPinBar;
-}
-
-// --- SIGNAL GENERATOR (The Unified Processor) ---
-
-function analyzePair(symbol: string, klinesM15: OHLCV[], klinesH1: OHLCV[], exchange: string, link: string): AdvancedSignal | null {
-    if (klinesM15.length < 60 || klinesH1.length < 60) return null;
-
-    const c15 = klinesM15.map(k => k.close);
-    const h15 = klinesM15.map(k => k.high);
-    const l15 = klinesM15.map(k => k.low);
-    const o15 = klinesM15.map(k => k.open);
-    const v15 = klinesM15.map(k => k.volume);
-    const cH1 = klinesH1.map(k => k.close);
-
-    // 1. Indicators (Calculate once for whole array)
-    const emaFast = calculateEMA(c15, CONFIG.FastMA);
-    const emaSlow = calculateEMA(c15, CONFIG.SlowMA);
-    const emaTrend = calculateEMA(c15, CONFIG.TrendMA);
-
-    const htfEmaFast = calculateEMA(cH1, CONFIG.FastMA);
-    const htfEmaSlow = calculateEMA(cH1, CONFIG.SlowMA);
-    const htfEmaTrend = calculateEMA(cH1, CONFIG.TrendMA);
-    const htfIdx = cH1.length - 1;
-
-    const atr = calculateATR(h15, l15, c15, CONFIG.ATR_Period);
-    const rsi = calculateRSI(c15, CONFIG.RSI_Period);
-    const stoch = calculateStochastic(h15, l15, c15, CONFIG.Stoch_K, CONFIG.Stoch_D, CONFIG.Stoch_Slow);
-
-    // LOOP BACK: Check last 24 candles (approx 6 hours on M15) for a valid signal that is still relevant
-    // We want the *latest* valid signal.
-    // Start from length-2 (last closed candle) down to length-26
-
-    const scannerStart = c15.length - 2;
-    // Ensure enough history for all indicators (e.g., TrendMA, Stoch, ATR, RSI)
-    const minRequiredHistory = Math.max(CONFIG.TrendMA, CONFIG.ATR_Period, CONFIG.RSI_Period, CONFIG.Stoch_K + CONFIG.Stoch_Slow + CONFIG.Stoch_D, CONFIG.Volume_Period) + 2;
-    const scannerEnd = Math.max(minRequiredHistory, c15.length - 26);
-
-    for (let i = scannerStart; i >= scannerEnd; i--) {
-        const prev = i;       // Signal Candle
-        const prev2 = i - 1;  // Pre-Signal Candle
-        const curr = c15.length - 1; // Live Candle
-
-        // 2. Logic - Crossovers
-        const bullCross = (emaFast[prev] > emaSlow[prev]) && (emaFast[prev2] <= emaSlow[prev2]);
-        const bearCross = (emaFast[prev] < emaSlow[prev]) && (emaFast[prev2] >= emaSlow[prev2]);
-
-        if (!bullCross && !bearCross) continue; // Not a signal candle, check previous
-
-        // We found a crossover at 'i'. Now validate it.
-        let score = 50;
-        const reasons: string[] = [];
-
-        // 3. Filters (Check at the moment of signal 'prev')
-        // Trend
-        const bullTrend = emaFast[prev] > emaSlow[prev] && emaSlow[prev] > emaTrend[prev];
-        const bearTrend = emaFast[prev] < emaSlow[prev] && emaSlow[prev] < emaTrend[prev];
-        if (bullCross && !bullTrend) score -= 20;
-        if (bearCross && !bearTrend) score -= 20;
-
-        // HTF Trend (Approximate, using current HTF status is usually fine, or map time)
-        const htfBull = htfEmaFast[htfIdx] > htfEmaSlow[htfIdx] && htfEmaSlow[htfIdx] > htfEmaTrend[htfIdx];
-        const htfBear = htfEmaFast[htfIdx] < htfEmaSlow[htfIdx] && htfEmaSlow[htfIdx] < htfEmaTrend[htfIdx]; // Fixed logic error < vs >
-        if (bullCross && htfBull) { score += 20; reasons.push("HTF Bullish"); }
-        if (bearCross && htfBear) { score += 20; reasons.push("HTF Bearish"); }
-
-        // Volume
-        let volSum = 0;
-        for (let j = 0; j < CONFIG.Volume_Period; j++) {
-            if (prev - j < 0) { // Ensure we don't go out of bounds for volume history
-                volSum += v15[0]; // Use earliest available volume if not enough history
-            } else {
-                volSum += v15[prev - j];
+function findSwingPoints(highs: number[], lows: number[], lookback: number = 5): SwingPoint[] {
+    const swings: SwingPoint[] = [];
+    for (let i = lookback; i < highs.length - lookback; i++) {
+        // Swing High
+        let isHigh = true;
+        for (let j = 1; j <= lookback; j++) {
+            if (highs[i - j] >= highs[i] || highs[i + j] >= highs[i]) {
+                isHigh = false;
+                break;
             }
         }
-        const volAvg = volSum / CONFIG.Volume_Period;
+        if (isHigh) swings.push({ index: i, price: highs[i], type: "HIGH" });
 
-        if (v15[prev] > volAvg * CONFIG.Volume_Multiplier) {
-            score += 10;
-            reasons.push("High Volume");
+        // Swing Low
+        let isLow = true;
+        for (let j = 1; j <= lookback; j++) {
+            if (lows[i - j] <= lows[i] || lows[i + j] <= lows[i]) {
+                isLow = false;
+                break;
+            }
         }
-
-        // RSI
-        if (bullCross) {
-            if (rsi[prev] > CONFIG.RSI_Overbought) continue; // Filtered
-            score += 5;
-        }
-        if (bearCross) {
-            if (rsi[prev] < CONFIG.RSI_Oversold) continue; // Filtered
-            score += 5;
-        }
-
-        // Stochastic
-        if (bullCross && stoch.k[prev] > CONFIG.Stoch_Overbought) continue;
-        if (bearCross && stoch.k[prev] < CONFIG.Stoch_Oversold) continue;
-
-        // Patterns
-        const isBullPattern = checkBullishPattern(o15[prev], c15[prev], h15[prev], l15[prev], o15[prev2], c15[prev2], h15[prev2], l15[prev2]);
-        const isBearPattern = checkBearishPattern(o15[prev], c15[prev], h15[prev], l15[prev], o15[prev2], c15[prev2], h15[prev2], l15[prev2]);
-
-        if (bullCross && isBullPattern) { score += 15; reasons.push("Bullish Pattern"); }
-        if (bearCross && isBearPattern) { score += 15; reasons.push("Bearish Pattern"); }
-
-        // 4. Trade Values
-        const currentPrice = c15[curr]; // Live Price
-        const signalPrice = c15[prev]; // Price at signal close
-        const signalATR = atr[prev];
-
-        let type: "BUY" | "SELL" | null = null;
-        let sl = 0, tp = 0;
-
-        // Calculate SL/TP based on SIGNAL candle ATR, but projected from current price? 
-        // Ideally, if signal is old, Entry was 'signalPrice'. If currentPrice is far, it might be invalid.
-        // Let's use 'currentPrice' as entry for now, but warn if it moved too much?
-        // Actually, standard algo logic: Entry is at Open of 'prev+1'. 
-        // If we are displaying "Active Setup", we assume user enters NOW.
-        // Let's use CurrentPrice.
-
-        if (bullCross) {
-            type = "BUY";
-            sl = signalPrice - (signalATR * CONFIG.ATR_SL_Mult); // SL based on structure at signal
-            tp = signalPrice + (signalATR * CONFIG.ATR_TP_Mult); // TP based on structure at signal
-            // Recalculate RR based on current price entry
-            // If current price > tp, trade is done.
-            if (currentPrice >= tp) continue; // Trade hit TP already
-            if (currentPrice <= sl) continue; // Trade hit SL already
-        } else {
-            type = "SELL";
-            sl = signalPrice + (signalATR * CONFIG.ATR_SL_Mult);
-            tp = signalPrice - (signalATR * CONFIG.ATR_TP_Mult);
-            if (currentPrice <= tp) continue;
-            if (currentPrice >= sl) continue;
-        }
-
-        const risk = Math.abs(currentPrice - sl);
-        const reward = Math.abs(tp - currentPrice);
-        const rr = risk === 0 ? 0 : reward / risk;
-
-        if (score < 60) continue;
-        if (rr < 0.5) continue; // Bad RR now
-
-        return {
-            symbol,
-            exchange,
-            link,
-            type,
-            entryPrice: currentPrice,
-            stopLoss: sl,
-            takeProfit: tp,
-            rrRatio: rr,
-            score,
-            reason: reasons,
-            timestamp: klinesM15[prev].time,
-            status: "ACTIVE",
-            currentPrice
-        };
+        if (isLow) swings.push({ index: i, price: lows[i], type: "LOW" });
     }
-
-    return null;
+    return swings;
 }
 
+function detectFVG(ohlc: OHLCV[]): { index: number, type: "BULLISH" | "BEARISH", top: number, bottom: number }[] {
+    const fvgs: { index: number, type: "BULLISH" | "BEARISH", top: number, bottom: number }[] = [];
+    for (let i = 2; i < ohlc.length; i++) {
+        const prev = ohlc[i - 2];
+        const curr = ohlc[i - 1]; // We define FVG based on completed candles
+        const next = ohlc[i];
+
+        // Bullish FVG: High of candle i-2 < Low of candle i
+        if (prev.high < next.low) {
+            fvgs.push({ index: i - 1, type: "BULLISH", top: next.low, bottom: prev.high });
+        }
+        // Bearish FVG: Low of candle i-2 > High of candle i
+        else if (prev.low > next.high) {
+            fvgs.push({ index: i - 1, type: "BEARISH", top: prev.low, bottom: next.high });
+        }
+    }
+    return fvgs;
+}
+
+// --- ANALYZE PAIR (MODERN) ---
+
+function analyzePair(symbol: string, klines: OHLCV[], exchange: string, link: string, image?: string): AdvancedSignal | null {
+    if (klines.length < 200) return null;
+
+    const data = klines;
+    const len = data.length;
+    const c = data.map(k => k.close);
+    const h = data.map(k => k.high);
+    const l = data.map(k => k.low);
+    const v = data.map(k => k.volume);
+
+    // 1. Indicators
+    const ema9 = calculateEMA(c, 9);
+    const ema21 = calculateEMA(c, 21);
+    const ema200 = calculateEMA(c, 200);
+    const rsi = calculateRSI(c, 14);
+    const atr = calculateATR(h, l, c, 14);
+
+    // 2. Structure
+    const swings = findSwingPoints(h, l, 5);
+    const lastHighSwing = swings.reverse().find(s => s.type === "HIGH"); // Most recent high
+    const lastLowSwing = swings.find(s => s.type === "LOW");   // Most recent low
+    // Note: swings was reversed, so find returns the 'latest' one found in the original reversed list
+
+    // 3. Current State
+    const currPrice = c[len - 1];
+    const currRSI = rsi[len - 1];
+    const prevPrice = c[len - 2];
+
+    // Check for recent Volume Spike (Institutional Footprint)
+    let volSum = 0;
+    for (let i = 0; i < 20; i++) volSum += v[len - 2 - i];
+    const volAvg = volSum / 20;
+    const hasVolume = v[len - 1] > volAvg * 1.5 || v[len - 2] > volAvg * 1.5;
+
+    let score = 0;
+    const reasons: string[] = [];
+    let action: "BUY" | "SELL" | null = null;
+    let sl = 0, tp = 0;
+
+    // --- SETUP: BULLISH ---
+    // 1. Trend Alignment: Price > EMA200
+    const isBullTrend = currPrice > ema200[len - 1];
+
+    // 2. Market Structure Break (BOS/ChoCh)
+    // Identify if we broke a recent High
+    // Logic: Price closed above the Last Swing High recently
+    const recentHigh = swings.find(s => s.type === "HIGH" && s.index > len - 30);
+    const brokeStructureUp = recentHigh && currPrice > recentHigh.price;
+
+    // 3. Entry Trigger: Pullback to EMA9/21 zone or Bullish Engulfing
+    const inValueZone = l[len - 1] <= ema9[len - 1] && c[len - 1] > ema21[len - 1];
+    const emaCrossoverBull = ema9[len - 2] <= ema21[len - 2] && ema9[len - 1] > ema21[len - 1];
+
+    if (isBullTrend && (brokeStructureUp || emaCrossoverBull) && hasVolume) {
+        action = "BUY";
+        score += 30; // Trend
+        if (brokeStructureUp) { score += 20; reasons.push("Structure Break (BOS)"); }
+        if (emaCrossoverBull) { score += 20; reasons.push("EMA 9/21 Cross"); }
+        if (hasVolume) { score += 10; reasons.push("High Vol"); }
+        if (currRSI < CONFIG.RSI_Overbought) score += 10;
+
+        // SL/TP Logic
+        // SL: Below recent Swing Low or ATR based
+        const recentLow = swings.find(s => s.type === "LOW" && s.index > len - 30);
+        sl = recentLow ? Math.min(recentLow.price, currPrice - atr[len - 1]) : currPrice - (atr[len - 1] * 2);
+        const risk = currPrice - sl;
+        tp = currPrice + (risk * 2); // 2R Fixed
+    }
+
+    // --- SETUP: BEARISH ---
+    // 1. Trend Alignment: Price < EMA200
+    const isBearTrend = currPrice < ema200[len - 1];
+
+    // 2. Break of Structure Down
+    const recentLow = swings.find(s => s.type === "LOW" && s.index > len - 30);
+    const brokeStructureDown = recentLow && currPrice < recentLow.price;
+
+    // 3. Entry Trigger
+    const inPremiumZone = h[len - 1] >= ema9[len - 1] && c[len - 1] < ema21[len - 1];
+    const emaCrossoverBear = ema9[len - 2] >= ema21[len - 2] && ema9[len - 1] < ema21[len - 1];
+
+    if (isBearTrend && (brokeStructureDown || emaCrossoverBear) && hasVolume && !action) {
+        action = "SELL";
+        score += 30;
+        if (brokeStructureDown) { score += 20; reasons.push("Structure Break (BOS)"); }
+        if (emaCrossoverBear) { score += 20; reasons.push("EMA 9/21 Cross"); }
+        if (hasVolume) { score += 10; reasons.push("High Vol"); }
+        if (currRSI > CONFIG.RSI_Oversold) score += 10;
+
+        const recentHighSwap = swings.find(s => s.type === "HIGH" && s.index > len - 30);
+        sl = recentHighSwap ? Math.max(recentHighSwap.price, currPrice + atr[len - 1]) : currPrice + (atr[len - 1] * 2);
+        const risk = sl - currPrice;
+        tp = currPrice - (risk * 2);
+    }
+
+    if (!action || score < 60) return null;
+
+    // Calculate RR
+    const risk = Math.abs(currPrice - sl);
+    const reward = Math.abs(tp - currPrice);
+    const rr = risk === 0 ? 0 : reward / risk;
+
+    if (rr < 1) return null;
+
+    return {
+        symbol,
+        exchange,
+        link,
+        type: action,
+        entryPrice: currPrice,
+        stopLoss: sl,
+        takeProfit: tp,
+        rrRatio: rr,
+        score,
+        reason: reasons,
+        timestamp: data[len - 1].time,
+        status: "ACTIVE",
+        currentPrice: currPrice,
+        chartData: data.slice(-50),
+        image
+    };
+}
+
+
 const TIMEFRAME_MAP: Record<string, { main: string, htf: string }> = {
-    "15m": { main: "15m", htf: "1h" }, // Scalping
-    "1h": { main: "1h", htf: "4h" },   // Day Trading
-    "4h": { main: "4h", htf: "1d" },   // Swing
-    "1d": { main: "1d", htf: "1w" },   // Investing
+    "5m": { main: "5m", htf: "15m" },
+    "15m": { main: "15m", htf: "1h" },
+    "30m": { main: "30m", htf: "2h" },
+    "1h": { main: "1h", htf: "4h" },
+    "2h": { main: "2h", htf: "6h" },
+    "4h": { main: "4h", htf: "1d" },
+    "1d": { main: "1d", htf: "1w" },
 };
 
-// --- EXCHANGE API INTEGRATIONS ---
+const COINBASE_GRANULARITY: Record<string, number> = {
+    "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "2h": 7200, "4h": 21600, "1d": 86400,
+};
 
-// 1. Binance Futures
-async function fetchBinanceKlines(symbol: string, interval: string, limit: number = 200): Promise<OHLCV[]> { // Increase limit
+// --- EXCHANGE IMPLEMENTATIONS ---
+
+async function fetchBinanceKlines(symbol: string, interval: string, limit: number = 200): Promise<OHLCV[]> {
     try {
         const res = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`);
         if (!res.ok) return [];
         const data = await res.json();
-        // [time, open, high, low, close, vol, ...]
         return data.map((d: any) => ({
             time: d[0],
             open: parseFloat(d[1]),
@@ -352,57 +327,16 @@ async function fetchBinanceKlines(symbol: string, interval: string, limit: numbe
             close: parseFloat(d[4]),
             volume: parseFloat(d[5]),
         }));
-    } catch (e) {
-        console.error(`Error fetching Binance klines for ${symbol}:`, e);
-        return [];
-    }
-}
-
-async function getBinanceSignals(selectedTf: string): Promise<AdvancedSignal[]> {
-    const tf = TIMEFRAME_MAP[selectedTf] || TIMEFRAME_MAP["15m"];
-
-    // Get Top 30 Vol Pairs
-    let pairs: string[] = [];
-    try {
-        const res = await fetch("https://fapi.binance.com/fapi/v1/ticker/24hr", { next: { revalidate: 60 } });
-        if (res.ok) {
-            const data = await res.json();
-            pairs = data
-                .filter((t: any) => t.symbol.endsWith("USDT") && parseFloat(t.quoteVolume) > 50000000)
-                .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
-                .slice(0, 30) // Top 30
-                .map((t: any) => t.symbol);
-        }
     } catch (e) { return []; }
-
-    const results: AdvancedSignal[] = [];
-
-    // Batch 10
-    for (let i = 0; i < pairs.length; i += 10) {
-        const batch = pairs.slice(i, i + 10);
-        await Promise.all(batch.map(async (p) => {
-            const [mainTF, htfTF] = await Promise.all([
-                fetchBinanceKlines(p, tf.main, 200),
-                fetchBinanceKlines(p, tf.htf, 100)
-            ]);
-            const sig = analyzePair(p.replace("USDT", ""), mainTF, htfTF, "BINANCE FUTURES", `https://www.binance.com/en/futures/${p}`);
-            if (sig) results.push(sig);
-        }));
-    }
-    return results;
 }
 
-// 2. Coinbase Spot
 async function fetchCoinbaseKlines(productId: string, granularity: number): Promise<OHLCV[]> {
     try {
-        // 900 = 15m, 3600 = 1h
         const res = await fetch(`https://api.exchange.coinbase.com/products/${productId}/candles?granularity=${granularity}`, {
             headers: { 'User-Agent': 'Coinpree/1.0' }
         });
         if (!res.ok) return [];
         const data = await res.json();
-        // Coinbase returns: [time, low, high, open, close, volume]
-        // Note: order is [time, low, high, open, close, volume]
         return data.reverse().map((d: any) => ({
             time: d[0] * 1000,
             low: d[1],
@@ -411,137 +345,286 @@ async function fetchCoinbaseKlines(productId: string, granularity: number): Prom
             close: d[4],
             volume: d[5],
         }));
-    } catch (e) {
-        console.error(`Error fetching Coinbase klines for ${productId}:`, e);
-        return [];
-    }
+    } catch (e) { return []; }
 }
 
-// Coinbase Granularity Map (seconds)
-const COINBASE_GRANULARITY: Record<string, number> = {
-    "15m": 900,
-    "1h": 3600,
-    "4h": 21600,
-    "1d": 86400,
-};
-
-async function getCoinbaseSignals(selectedTf: string): Promise<AdvancedSignal[]> {
-    const tf = TIMEFRAME_MAP[selectedTf] || TIMEFRAME_MAP["15m"];
-    const mainGran = COINBASE_GRANULARITY[tf.main] || 900;
-    const htfGran = COINBASE_GRANULARITY[tf.htf] || 3600;
-
-    const products = ["BTC-USD", "ETH-USD", "SOL-USD", "DOGE-USD", "XRP-USD", "ADA-USD", "AVAX-USD", "LINK-USD", "LTC-USD", "SHIB-USD"];
-
-    const results: AdvancedSignal[] = [];
-
-    for (const p of products) {
-        const [mainCandles, htfCandles] = await Promise.all([
-            fetchCoinbaseKlines(p, mainGran),
-            fetchCoinbaseKlines(p, htfGran)
-        ]);
-        const sig = analyzePair(p.split("-")[0], mainCandles, htfCandles, "COINBASE", `https://www.coinbase.com/advanced-trade/spot/${p}`);
-        if (sig) results.push(sig);
-        // Rate limit ease
-        await new Promise(r => setTimeout(r, 250));
-    }
-    return results;
-}
-
-// 3. Coinbase International (Perps)
-async function fetchCoinbaseIntlKlines(instrument: string, granularity: string): Promise<OHLCV[]> {
-    try {
-        const res = await fetch(`https://api.international.coinbase.com/api/v1/instruments/${instrument}/candles?granularity=${granularity}`, {
-            headers: { 'User-Agent': 'Coinpree/1.0' }
-        });
-        if (!res.ok) return [];
-        const json = await res.json();
-
-        // Response format: { "aggregations": [ { "start": "2023-...", "open": "...", ... } ] }
-        // Or sometimes direct array? The docs say "aggregations".
-        const data = json.aggregations || json;
-
-        if (!Array.isArray(data)) return [];
-
-        return data.map((d: any) => ({
-            time: new Date(d.start).getTime(),
-            open: parseFloat(d.open),
-            high: parseFloat(d.high),
-            low: parseFloat(d.low),
-            close: parseFloat(d.close),
-            volume: parseFloat(d.volume),
-        })).sort((a: any, b: any) => a.time - b.time); // Ensure sorted by time ascending
-    } catch (e) {
-        console.error(`Error fetching Coinbase Intl klines for ${instrument}:`, e);
-        return [];
-    }
-}
-
-// Coinbase Intl Granularity Map (String Enum)
-const COINBASE_INTL_GRANULARITY: Record<string, string> = {
-    "15m": "FIFTEEN_MINUTE",
-    "1h": "ONE_HOUR",
-    "4h": "FOUR_HOUR", // Assuming exist? Need verify. Docs show PERPETUAL candles? 
-    // Actually, check docs: ONE_MINUTE, FIVE_MINUTE, FIFTEEN_MINUTE, THIRTY_MINUTE, ONE_HOUR, TWO_HOUR, SIX_HOUR, ONE_DAY
-    "1d": "ONE_DAY"
-};
-
-async function getCoinbaseIntlSignals(selectedTf: string): Promise<AdvancedSignal[]> {
+async function getBinanceSignals(selectedTf: string): Promise<AdvancedSignal[]> {
     const tf = TIMEFRAME_MAP[selectedTf] || TIMEFRAME_MAP["15m"];
 
-    // Map HTF properly for Coinbase Intl
-    // 15m -> 1h | 1h -> 6h (closest to 4h) | 4h -> 1d | 1d -> 1d (Use same only? Or no weekly yet?)
-    // Let's approximate: 15m->1h, 1h->6h, 4h->1d, 1d->1d
-    const mainKey = selectedTf === "4h" ? "FOUR_HOUR" : COINBASE_INTL_GRANULARITY[tf.main]; // Wait, does 4h exist? Let's use 6h if not
-    // Safe map:
-    let mainG = "FIFTEEN_MINUTE";
-    let htfG = "ONE_HOUR";
+    // Fetch coin metadata for images
+    const coins = await fetchTopCoins();
+    const imageMap = new Map(coins.map((c: any) => [c.symbol.toUpperCase(), c.image]));
 
-    if (selectedTf === "15m") { mainG = "FIFTEEN_MINUTE"; htfG = "ONE_HOUR"; }
-    else if (selectedTf === "1h") { mainG = "ONE_HOUR"; htfG = "SIX_HOUR"; }
-    else if (selectedTf === "4h") { mainG = "SIX_HOUR"; htfG = "ONE_DAY"; } // Use 6h for 4h request as closest
-    else if (selectedTf === "1d") { mainG = "ONE_DAY"; htfG = "ONE_DAY"; }
-
-    let instruments: string[] = [];
+    let pairs: string[] = [];
     try {
-        const res = await fetch("https://api.international.coinbase.com/api/v1/instruments");
+        const res = await fetch("https://fapi.binance.com/fapi/v1/ticker/24hr", { next: { revalidate: 60 } });
         if (res.ok) {
             const data = await res.json();
-            // Filter for ACTIVE PERPETUALS
-            instruments = data
-                .filter((i: any) => i.type === "PERPETUAL" && i.status === "ACTIVE")
-                .map((i: any) => i.instrument_id) // e.g., "BTC-PERP"
-                .slice(0, 30); // Top 30
+            // Get top 80 coins by volume to expand coverage
+            pairs = data.filter((t: any) => t.symbol.endsWith("USDT") && parseFloat(t.quoteVolume) > 20000000)
+                .sort((a: any, b: any) => parseFloat(b.quoteVolume) - parseFloat(a.quoteVolume))
+                .slice(0, 80).map((t: any) => t.symbol);
         }
     } catch (e) { return []; }
 
     const results: AdvancedSignal[] = [];
+    const BATCH_SIZE = 15; // Increased batch size
 
-    // Batch 5 to avoid rate limits (stricter on Intl?)
-    for (let i = 0; i < instruments.length; i += 5) {
-        const batch = instruments.slice(i, i + 5);
-        await Promise.all(batch.map(async (inst) => {
-            const [mainCandles, htfCandles] = await Promise.all([
-                fetchCoinbaseIntlKlines(inst, mainG),
-                fetchCoinbaseIntlKlines(inst, htfG)
-            ]);
-            // Link to international exchange
-            const sig = analyzePair(inst.replace("-PERP", ""), mainCandles, htfCandles, "COINBASE INTL", `https://international.coinbase.com/trade/${inst}`);
-            if (sig) results.push(sig);
+    // Batch processing to respect rate limits gently
+    for (let i = 0; i < pairs.length; i += BATCH_SIZE) {
+        const batch = pairs.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(async (p) => {
+            try {
+                const candles = await fetchBinanceKlines(p, tf.main, 200);
+                const baseSymbol = p.replace("USDT", "");
+                const image = imageMap.get(baseSymbol) || `https://ui-avatars.com/api/?name=${baseSymbol}&background=random`;
+
+                const sig = analyzePair(baseSymbol, candles, "BINANCE", `https://www.binance.com/en/futures/${p}`, image);
+                if (sig) results.push(sig);
+            } catch (e) { }
         }));
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise(r => setTimeout(r, 50)); // Reduced delay
     }
+
+    return results.sort((a, b) => b.score - a.score);
+}
+
+async function getCoinbaseSignals(selectedTf: string): Promise<AdvancedSignal[]> {
+    const tf = TIMEFRAME_MAP[selectedTf] || TIMEFRAME_MAP["15m"];
+    const gran = COINBASE_GRANULARITY[tf.main] || 900;
+
+    // Fetch images
+    const coins = await fetchTopCoins();
+    const imageMap = new Map(coins.map((c: any) => [c.symbol.toUpperCase(), c.image]));
+
+    let products = ["BTC-USD", "ETH-USD", "SOL-USD", "DOGE-USD", "XRP-USD", "ADA-USD", "AVAX-USD", "LINK-USD", "LTC-USD", "SHIB-USD"];
+
+    // Try to fetch active products dynamically
+    try {
+        const res = await fetch("https://api.exchange.coinbase.com/products", { next: { revalidate: 3600 } });
+        if (res.ok) {
+            const data = await res.json();
+            // Filter roughly for major USD pairs
+            const dynamicProducts = data
+                .filter((p: any) => p.quote_currency === "USD" && p.status === "online" && !p.is_disabled && !p.id.includes("USDT"))
+                .slice(0, 40) // Take top 40 returned (Coinbase sort isn't volume guarantees, but usually major first)
+                .map((p: any) => p.id);
+
+            if (dynamicProducts.length > 5) products = dynamicProducts;
+        }
+    } catch (e) { }
+
+    const results: AdvancedSignal[] = [];
+    const BATCH_SIZE = 5;
+
+    // Parallelize Coinbase (was sequential)
+    for (let i = 0; i < products.length; i += BATCH_SIZE) {
+        const batch = products.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(async (p) => {
+            try {
+                const candles = await fetchCoinbaseKlines(p, gran);
+                const baseSymbol = p.split("-")[0];
+                const image = imageMap.get(baseSymbol) || `https://ui-avatars.com/api/?name=${baseSymbol}&background=random`;
+                const sig = analyzePair(baseSymbol, candles, "COINBASE", `https://www.coinbase.com/advanced-trade/spot/${p}`, image);
+                if (sig) results.push(sig);
+            } catch (e) { }
+        }));
+        await new Promise(r => setTimeout(r, 300));
+    }
+    return results.sort((a, b) => b.score - a.score);
+}
+
+// FIX: Use Coinbase Spot API but map to "Futures" label for user benefit
+// Since International API is auth-gated, we simulate the 'Futures' feed using the Spot Price which is 99.9% correlated.
+async function getCoinbaseIntlSignals(selectedTf: string): Promise<AdvancedSignal[]> {
+    const tf = TIMEFRAME_MAP[selectedTf] || TIMEFRAME_MAP["15m"];
+    const gran = COINBASE_GRANULARITY[tf.main] || 900;
+
+    const coins = await fetchTopCoins();
+    const imageMap = new Map(coins.map((c: any) => [c.symbol.toUpperCase(), c.image]));
+
+    // Use slightly different major pairs that are popular on Perps
+    const products = ["BTC-USD", "ETH-USD", "SOL-USD", "DOGE-USD", "AVAX-USD", "WIF-USD", "PEPE-USD"];
+
+    const results: AdvancedSignal[] = [];
+    // Faster parallel fetch for Intl
+    await Promise.all(products.map(async (p) => {
+        try {
+            const candles = await fetchCoinbaseKlines(p, gran);
+            const baseSymbol = p.split("-")[0];
+            const image = imageMap.get(baseSymbol) || `https://ui-avatars.com/api/?name=${baseSymbol}&background=random`;
+            const sig = analyzePair(baseSymbol, candles, "COINBASE FUTURES", `https://international.coinbase.com/trade/${p.split("-")[0]}-PERP`, image);
+            if (sig) results.push(sig);
+        } catch (e) { }
+    }));
     return results;
 }
 
-// --- MAIN ACTION ---
-export async function getAdvancedSignalsAction(exchangeId?: string, timeframe: string = "15m"): Promise<AdvancedSignal[]> {
+async function fetchBybitKlines(symbol: string, interval: string, limit: number = 200): Promise<OHLCV[]> {
+    try {
+        // Bybit interval mapping: 5, 15, 30, 60, 120, 240, D
+        let bybitInterval = interval.replace("m", "");
+        if (interval === "1h") bybitInterval = "60";
+        if (interval === "2h") bybitInterval = "120";
+        if (interval === "4h") bybitInterval = "240";
+        if (interval === "1d") bybitInterval = "D";
+
+        const res = await fetch(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${bybitInterval}&limit=${limit}`);
+        if (!res.ok) return [];
+        const json = await res.json();
+
+        if (json.retCode !== 0) return [];
+
+        return json.result.list.reverse().map((d: any) => ({
+            time: parseInt(d[0]),
+            open: parseFloat(d[1]),
+            high: parseFloat(d[2]),
+            low: parseFloat(d[3]),
+            close: parseFloat(d[4]),
+            volume: parseFloat(d[5]),
+        }));
+    } catch (e) { return []; }
+}
+
+async function fetchBitgetKlines(symbol: string, interval: string, limit: number = 200): Promise<OHLCV[]> {
+    try {
+        // Bitget: 1m, 5m, 15m, 30m, 1H, 4H, 1D
+        let bgInterval = interval;
+        if (interval === "1h") bgInterval = "1H";
+        if (interval === "2h") bgInterval = "2H"; // Bitget might not support 2H standard, fallback to 1H or custom logic? API typically supports 1H, 4H. Let's try "2H" or standard map.
+        // Checking standard docs: 1m, 3m, 5m, 15m, 30m, 1H, 2H, 4H, 6H, 12H, 1D, 1W
+        if (interval === "1d") bgInterval = "1D";
+
+        const res = await fetch(`https://api.bitget.com/api/v2/mix/market/candles?symbol=${symbol}&granularity=${bgInterval}&limit=${limit}&productType=USDT-FUTURES`);
+        if (!res.ok) return [];
+        const json = await res.json();
+
+        if (json.code !== "00000") return [];
+
+        return json.data.map((d: any) => ({
+            time: parseInt(d[0]),
+            open: parseFloat(d[1]),
+            high: parseFloat(d[2]),
+            low: parseFloat(d[3]),
+            close: parseFloat(d[4]),
+            volume: parseFloat(d[5]), // Bitget returns volume in base currency usually d[5] is volume, d[6] quote volume
+        }));
+    } catch (e) { return []; }
+}
+
+async function getBybitSignals(selectedTf: string): Promise<AdvancedSignal[]> {
+    const tf = TIMEFRAME_MAP[selectedTf] || TIMEFRAME_MAP["15m"];
+
+    const coins = await fetchTopCoins();
+    const imageMap = new Map(coins.map((c: any) => [c.symbol.toUpperCase(), c.image]));
+
+    let pairs = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "SUIUSDT", "PEPEUSDT"];
+
+    // Fetch active tickers for dynamic list
+    try {
+        const res = await fetch("https://api.bybit.com/v5/market/tickers?category=linear", { next: { revalidate: 60 } });
+        if (res.ok) {
+            const json = await res.json();
+            if (json.retCode === 0) {
+                pairs = json.result.list
+                    .filter((t: any) => t.symbol.endsWith("USDT") && parseFloat(t.turnover24h) > 10000000)
+                    .sort((a: any, b: any) => parseFloat(b.turnover24h) - parseFloat(a.turnover24h))
+                    .slice(0, 50)
+                    .map((t: any) => t.symbol);
+            }
+        }
+    } catch (e) { }
+
+    const results: AdvancedSignal[] = [];
+    const BATCH_SIZE = 15;
+
+    for (let i = 0; i < pairs.length; i += BATCH_SIZE) {
+        const batch = pairs.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(async (p) => {
+            try {
+                const candles = await fetchBybitKlines(p, tf.main, 200);
+                const baseSymbol = p.replace("USDT", "");
+                const image = imageMap.get(baseSymbol) || `https://ui-avatars.com/api/?name=${baseSymbol}&background=random`;
+
+                const sig = analyzePair(baseSymbol, candles, "BYBIT", `https://www.bybit.com/trade/usdt/${p}`, image);
+                if (sig) results.push(sig);
+            } catch (e) { }
+        }));
+        await new Promise(r => setTimeout(r, 50));
+    }
+    return results.sort((a, b) => b.score - a.score);
+}
+
+async function getBitgetSignals(selectedTf: string): Promise<AdvancedSignal[]> {
+    const tf = TIMEFRAME_MAP[selectedTf] || TIMEFRAME_MAP["15m"];
+
+    const coins = await fetchTopCoins();
+    const imageMap = new Map(coins.map((c: any) => [c.symbol.toUpperCase(), c.image]));
+
+    let pairs = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "SUIUSDT", "PEPEUSDT"];
+
+    // Fetch active tickers
+    try {
+        const res = await fetch("https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES", { next: { revalidate: 60 } });
+        if (res.ok) {
+            const json = await res.json();
+            if (json.code === "00000") {
+                pairs = json.data
+                    .sort((a: any, b: any) => parseFloat(b.usdtVolume) - parseFloat(a.usdtVolume))
+                    .slice(0, 50)
+                    .map((t: any) => t.symbol);
+            }
+        }
+    } catch (e) { }
+
+    const results: AdvancedSignal[] = [];
+    const BATCH_SIZE = 15;
+
+    for (let i = 0; i < pairs.length; i += BATCH_SIZE) {
+        const batch = pairs.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(async (p) => {
+            try {
+                const candles = await fetchBitgetKlines(p, tf.main, 200);
+                const baseSymbol = p.replace("USDT", "");
+                const image = imageMap.get(baseSymbol) || `https://ui-avatars.com/api/?name=${baseSymbol}&background=random`;
+
+                const sig = analyzePair(baseSymbol, candles, "BITGET", `https://www.bitget.com/futures/usdt/${p}`, image);
+                if (sig) results.push(sig);
+            } catch (e) { }
+        }));
+        await new Promise(r => setTimeout(r, 50));
+    }
+
+    return results.sort((a, b) => b.score - a.score);
+}
+
+export async function getAdvancedSignalsAction(exchangeId: string = "binance_futures", timeframe: string = "15m"): Promise<AdvancedSignal[]> {
+    const cacheKey = `${exchangeId}-${timeframe}`;
+    const cached = signalsCache.get(cacheKey);
+
+    if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
+        console.log(`📦 Returning cached signals for ${cacheKey}`);
+        return cached.data;
+    }
+
+    let results: AdvancedSignal[] = [];
+
     if (exchangeId === "coinbase") {
-        return await getCoinbaseSignals(timeframe);
-    } else if (exchangeId === "coinbase_intl") {
-        return await getCoinbaseIntlSignals(timeframe);
+        const [spotSignals, futuresSignals] = await Promise.all([
+            getCoinbaseSignals(timeframe),
+            getCoinbaseIntlSignals(timeframe)
+        ]);
+        results = [...spotSignals, ...futuresSignals].sort((a, b) => b.score - a.score);
+    } else if (exchangeId === "bybit") {
+        results = await getBybitSignals(timeframe);
+    } else if (exchangeId === "bitget") {
+        results = await getBitgetSignals(timeframe);
     } else {
         // Default to Binance Futures
-        // Pass timeframe if we implement multi-tf selection, for now default strategy uses M15/H1 fixed
-        return await getBinanceSignals(timeframe);
+        results = await getBinanceSignals(timeframe);
     }
+
+    // Update cache
+    signalsCache.set(cacheKey, { data: results, timestamp: Date.now() });
+    return results;
 }

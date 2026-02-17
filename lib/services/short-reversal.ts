@@ -1,5 +1,45 @@
 import { fetchBinanceKlines, fetchTopCoins } from "./coingecko";
 
+// --- Helpers for other exchanges (Duplicated from advanced-algo to keep independent) ---
+async function fetchBybitKlines(symbol: string, interval: string, limit: number = 200): Promise<any[]> {
+    try {
+        let bybitInterval = interval.replace("m", "");
+        if (interval === "1h") bybitInterval = "60";
+        if (interval === "2h") bybitInterval = "120";
+        if (interval === "4h") bybitInterval = "240";
+        if (interval === "1d") bybitInterval = "D";
+
+        const res = await fetch(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${symbol}&interval=${bybitInterval}&limit=${limit}`);
+        if (!res.ok) return [];
+        const json = await res.json();
+        if (json.retCode !== 0) return [];
+
+        // Bybit returns [startTime, open, high, low, close, volume, ...]
+        return json.result.list.reverse().map((d: any) => [
+            parseInt(d[0]), parseFloat(d[1]), parseFloat(d[2]), parseFloat(d[3]), parseFloat(d[4]), parseFloat(d[5])
+        ]);
+    } catch (e) { return []; }
+}
+
+async function fetchBitgetKlines(symbol: string, interval: string, limit: number = 200): Promise<any[]> {
+    try {
+        let bgInterval = interval;
+        if (interval === "1h") bgInterval = "1H";
+        if (interval === "2h") bgInterval = "2H";
+        if (interval === "4h") bgInterval = "4H";
+        if (interval === "1d") bgInterval = "1D";
+
+        const res = await fetch(`https://api.bitget.com/api/v2/mix/market/candles?symbol=${symbol}&granularity=${bgInterval}&limit=${limit}&productType=USDT-FUTURES`);
+        if (!res.ok) return [];
+        const json = await res.json();
+        if (json.code !== "00000") return [];
+
+        return json.data.map((d: any) => [
+            parseInt(d[0]), parseFloat(d[1]), parseFloat(d[2]), parseFloat(d[3]), parseFloat(d[4]), parseFloat(d[5])
+        ]);
+    } catch (e) { return []; }
+}
+
 export interface ShortReversalSignal {
     coinId: string;
     symbol: string;
@@ -23,67 +63,131 @@ export interface ShortReversalSignal {
         vol20Avg: number;
         volRatio: number;
     };
-    setup: "CONFIRMED" | "POTENTIAL"; // CONFIRMED = Price broke low; POTENTIAL = Exhaustion observed, waiting for break
-    entryPrice: number; // Low of exhaustion candle (breakdown level)
-    stopLoss: number; // High of exhaustion candle
-    takeProfit: number; // 2R target
+    setup: "CONFIRMED" | "POTENTIAL";
+    entryPrice: number;
+    stopLoss: number;
+    takeProfit: number;
     timestamp: number;
+    chartData: { open: number; high: number; low: number; close: number }[];
+    exchange: string;
+    firstSeen?: number;
+    lastUpdate?: number;
 }
 
-// Calculate EMA helpers
 function calculateEMA(prices: number[], period: number): number[] {
     const k = 2 / (period + 1);
-    let emaArray = new Array(prices.length).fill(0);
-
-    // Simple MA for first value
+    const emaArray: number[] = new Array(prices.length).fill(0);
     let sum = 0;
     for (let i = 0; i < period; i++) sum += prices[i];
     emaArray[period - 1] = sum / period;
-
-    // EMA for rest
     for (let i = period; i < prices.length; i++) {
-        emaArray[i] = (prices[i] * k) + (emaArray[i - 1] * (1 - k));
+        emaArray[i] = prices[i] * k + emaArray[i - 1] * (1 - k);
     }
     return emaArray;
 }
 
 function calculateSMA(data: number[], period: number): number[] {
-    let sma = [];
+    const sma = [];
     for (let i = 0; i < data.length; i++) {
         if (i < period - 1) {
             sma.push(0);
             continue;
         }
         let sum = 0;
-        for (let j = 0; j < period; j++) {
-            sum += data[i - j];
-        }
+        for (let j = 0; j < period; j++) sum += data[i - j];
         sma.push(sum / period);
     }
     return sma;
 }
 
-export async function scanShortReversalSignals(): Promise<ShortReversalSignal[]> {
-    console.log("🔄 Scanning for Short Reversal Setup...");
+// Identify Swing Highs for Liquidity Sweep detection
+function findSwingHighs(highs: number[], lookback: number = 10): { index: number, price: number }[] {
+    const swings = [];
+    for (let i = lookback; i < highs.length - 2; i++) { // Don't check extremely recent to allow sweep
+        let isHigh = true;
+        for (let j = 1; j <= lookback; j++) {
+            if (highs[i - j] >= highs[i]) { isHigh = false; break; }
+        }
+        if (isHigh) swings.push({ index: i, price: highs[i] });
+    }
+    return swings;
+}
 
-    // 1. Get Top Coins (High Volume)
-    const coins = await fetchTopCoins();
+export async function scanShortReversalSignals(timeframe: string = "1d", exchange: string = "binance_futures", limit: number = 80): Promise<ShortReversalSignal[]> {
+    console.log(`🔄 Scanning for Modern Short Reversal Setups (${timeframe} on ${exchange}) limit: ${limit}...`);
+
+    // ... (rest of exchange pair logic)
+    let exchangePairs: string[] = [];
+    if (exchange === "bybit") {
+        try {
+            const res = await fetch("https://api.bybit.com/v5/market/tickers?category=linear", { next: { revalidate: 60 } });
+            if (res.ok) {
+                const json = await res.json();
+                if (json.retCode === 0) exchangePairs = json.result.list.filter((t: any) => t.symbol.endsWith("USDT")).map((t: any) => t.symbol);
+            }
+        } catch (e) { }
+    } else if (exchange === "bitget") {
+        try {
+            const res = await fetch("https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES", { next: { revalidate: 60 } });
+            if (res.ok) {
+                const json = await res.json();
+                if (json.code === "00000") exchangePairs = json.data.map((t: any) => t.symbol);
+            }
+        } catch (e) { }
+    }
+
+    // Default to CoinGecko list for Binance or fallback
+    const cgCoins = await fetchTopCoins();
+
+    // Construct the list to scan
+    let scanList: { symbol: string, coinObj: any }[] = [];
+
+    if (exchangePairs.length > 0) {
+        // Limit to requested count
+        exchangePairs = exchangePairs.slice(0, limit);
+
+        scanList = exchangePairs.map(pair => {
+            // Try to find matching CG coin
+            const base = pair.replace("USDT", "").replace("1000", "").toLowerCase();
+            const match = cgCoins.find(c => c.symbol.toLowerCase() === base);
+            return {
+                symbol: pair,
+                coinObj: match || {
+                    id: base,
+                    symbol: base,
+                    name: pair,
+                    image: `https://ui-avatars.com/api/?name=${base}&background=random` // Fallback image
+                }
+            };
+        });
+    } else {
+        // Fallback or Binance: Use CG list (limited)
+        scanList = cgCoins.slice(0, limit).map(c => ({
+            symbol: c.symbol.toUpperCase() + "USDT",
+            coinObj: c
+        }));
+    }
+
     const signals: ShortReversalSignal[] = [];
 
-    // 2. Process in batches
+    // Process scanList
     const BATCH_SIZE = 20;
-    for (let i = 0; i < coins.length; i += BATCH_SIZE) {
-        const batch = coins.slice(i, i + BATCH_SIZE);
-
-        await Promise.all(batch.map(async (coin) => {
+    for (let i = 0; i < scanList.length; i += BATCH_SIZE) {
+        const batch = scanList.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(async ({ symbol, coinObj }) => {
             try {
-                // Need approx 200 candles for EMA 200. Daily timeframe is best for this strategy.
-                // Or 4H. Let's stick to Daily (1d) as strategy implies "20-day average".
-                const klines = await fetchBinanceKlines(coin.symbol.toUpperCase() + "USDT", "1d");
+                let klines: any[] = [];
+
+                if (exchange === "bybit") {
+                    klines = await fetchBybitKlines(symbol, timeframe, 200);
+                } else if (exchange === "bitget") {
+                    klines = await fetchBitgetKlines(symbol, timeframe, 200);
+                } else {
+                    klines = await fetchBinanceKlines(symbol, timeframe) || [];
+                }
+
                 if (!klines || klines.length < 201) return;
 
-                // Extract arrays
-                // Klines: [time, open, high, low, close, volume]
                 const closes = klines.map(k => k[4]);
                 const highs = klines.map(k => k[2]);
                 const lows = klines.map(k => k[3]);
@@ -92,119 +196,105 @@ export async function scanShortReversalSignals(): Promise<ShortReversalSignal[]>
                 const timestamps = klines.map(k => k[0]);
 
                 const len = closes.length;
-                const currentIdx = len - 1; // Today (forming)
-                const outputIdx = len - 2; // Yesterday (Completed Candle) -> We look for exhaustion HERE usually
+                const currentIdx = len - 1; // Live/Today
+                const prevIdx = len - 2; // Yesterday (Completed)
 
-                // Current Price
-                const currentPrice = closes[currentIdx];
-
-                // Indicators
+                // 1. Indicators
                 const ema50 = calculateEMA(closes, 50);
                 const ema200 = calculateEMA(closes, 200);
                 const volSMA20 = calculateSMA(volumes, 20);
 
-                // --- STRATEGY CHECKS ---
+                // 2. Logic: Liquidity Sweep (Turtle Soup)
+                // We look for a candle (Recent, e.g., Yesterday or Today-so-far) that:
+                // a) Took out a previous Swing High (Sweep)
+                // b) Closed BELOW that Swing High (Rejection)
 
-                // Check last 3 candles for the "Exhaustion" pattern. 
-                // Why? Maybe it happened 2 days ago and triggered yesterday.
-                // We look at candle len-2 (Yesterday confirmed) or len-1 (Today forming, if huge usage).
-                // Let's look at confirmed candle (len-2) as the "Exhaustion Candle".
+                const swings = findSwingHighs(highs, 10); // Find major highs in last ~500 candles
+                // Filter swings: Must not be TOO recent (allow formation) and within reasonable history
+                const relevantSwings = swings.filter(s => s.index < len - 3 && s.index > len - 300);
 
-                const iEx = len - 2; // Index of potential exhaustion candle
+                // Check Yesterday (prevIdx) for Sweep
+                let sweepCandleIdx = -1;
 
-                if (iEx < 200) return;
-
-                // 1. Trend Filter: 
-                // Price < 200 EMA OR 50 EMA Slope Down/Flat
-                const price = closes[iEx];
-                const e200 = ema200[iEx];
-                const e50 = ema50[iEx];
-                const e50Prev = ema50[iEx - 5];
-                const e50Slope = e50 - e50Prev; // If negative or close to 0, it's flat/down.
-
-                const isDowntrend = price < e200;
-                const isWeakTrend = e50Slope <= 0; // Flat or down
-
-                if (!isDowntrend && !isWeakTrend) return; // Fighting strong uptrend
-
-                // 2. Exhaustion Candle metrics
-                const open = opens[iEx];
-                const close = closes[iEx];
-                const high = highs[iEx];
-                const low = lows[iEx];
-                const vol = volumes[iEx];
-                const volAvg = volSMA20[iEx];
-
-                const range = high - low;
-                const body = Math.abs(close - open);
-                const upperWick = high - Math.max(open, close);
-                const lowerWick = Math.min(open, close) - low;
-
-                // Criteria A: Rises at least 15%? 
-                // (High - Low) / Low >= 0.15 OR (Close - Open)/Open >= 0.15?
-                // "Exhaustion move" implies a big pump that failed.
-                // Let's use Total Range > 15% OR Body > 10% pump.
-                // User said "Rises at least 15%".
-                const movePct = ((high - low) / low) * 100;
-                if (movePct < 15) return; // Must be a big move
-
-                // Criteria B: Volume > 1.5x Avg
-                if (vol < 1.5 * volAvg) return;
-
-                // Criteria C: Clear upper wick (at least 30% of range)
-                const wickPct = (upperWick / range) * 100;
-                if (wickPct < 30) return;
-
-                // 3. Confirmation (The Trigger)
-                // We are looking at the current candle (iEx + 1, usually 'Today')
-                const currentLow = lows[currentIdx];
-                const exhaustionLow = low;
-
-                // Signal Structure
-                const entryPrice = low; // Breakdown level
-                const sl = high; // Stop above high
-                const risk = high - low;
-                const tp = entryPrice - (risk * 2); // 2R Target (Short)
-
-                let status: "CONFIRMED" | "POTENTIAL" = "POTENTIAL";
-
-                // If today's price has already broken the low of exhaustion candle
-                if (currentLow < exhaustionLow) {
-                    status = "CONFIRMED";
+                // Did Yesterday sweep any recent high?
+                for (const swing of relevantSwings) {
+                    // Check if High > SwingHigh AND Close < SwingHigh
+                    if (highs[prevIdx] > swing.price && closes[prevIdx] < swing.price) {
+                        sweepCandleIdx = prevIdx;
+                        break;
+                    }
                 }
 
+                if (sweepCandleIdx === -1) {
+                    // Also check Today (live) -> aggressive entry
+                    for (const swing of relevantSwings) {
+                        if (highs[currentIdx] > swing.price && closes[currentIdx] < swing.price) {
+                            sweepCandleIdx = currentIdx;
+                            break;
+                        }
+                    }
+                }
+
+                if (sweepCandleIdx === -1) return; // No sweep found
+
+                // 3. Filters
+                // Volume acceleration on sweep?
+                const volAvg = volSMA20[sweepCandleIdx];
+                const vol = volumes[sweepCandleIdx];
+                if (vol < volAvg * 0.8) return; // Allow slightly lower volume if structure is good
+
+                // Wick properties
+                const range = highs[sweepCandleIdx] - lows[sweepCandleIdx];
+                const upperWick = highs[sweepCandleIdx] - Math.max(opens[sweepCandleIdx], closes[sweepCandleIdx]);
+                const wickPct = (upperWick / range) * 100;
+
+                // 4. Trade Setup
+                const isConfirmed = closes[sweepCandleIdx] < opens[sweepCandleIdx]; // Bearish candle
+
                 signals.push({
-                    coinId: coin.id,
-                    symbol: coin.symbol,
-                    name: coin.name,
-                    image: coin.image,
-                    price: currentPrice,
+                    coinId: coinObj.id,
+                    symbol: coinObj.symbol.toUpperCase(),
+                    name: coinObj.name,
+                    image: coinObj.image,
+                    price: closes[len - 1], // Live price
                     exhaustionCandle: {
-                        high, low, open, close, volume: vol,
-                        timestamp: timestamps[iEx],
+                        high: highs[sweepCandleIdx],
+                        low: lows[sweepCandleIdx],
+                        open: opens[sweepCandleIdx],
+                        close: closes[sweepCandleIdx],
+                        volume: volumes[sweepCandleIdx],
+                        timestamp: timestamps[sweepCandleIdx],
                         upperWickPct: wickPct,
-                        bodyPct: (body / range) * 100,
-                        movePct
+                        bodyPct: (Math.abs(closes[sweepCandleIdx] - opens[sweepCandleIdx]) / range) * 100,
+                        movePct: ((highs[sweepCandleIdx] - lows[sweepCandleIdx]) / lows[sweepCandleIdx]) * 100
                     },
                     metrics: {
-                        ema50: e50,
-                        ema200: e200,
+                        ema50: ema50[sweepCandleIdx],
+                        ema200: ema200[sweepCandleIdx],
                         vol20Avg: volAvg,
-                        volRatio: vol / volAvg
+                        volRatio: vol / (volAvg || 1)
                     },
-                    setup: status,
-                    entryPrice,
-                    stopLoss: sl,
-                    takeProfit: tp,
-                    timestamp: Date.now()
+                    setup: isConfirmed ? "CONFIRMED" : "POTENTIAL",
+                    entryPrice: lows[sweepCandleIdx], // Aggressive: break of candle low
+                    stopLoss: highs[sweepCandleIdx],
+                    takeProfit: lows[sweepCandleIdx] - (highs[sweepCandleIdx] - lows[sweepCandleIdx]) * 2, // 2R
+                    timestamp: Date.now(),
+                    chartData: klines.slice(-30).map(k => ({
+                        open: k[1], high: k[2], low: k[3], close: k[4]
+                    })),
+                    exchange: exchange
                 });
 
-            } catch (e) {
-                // Ignore individual coin errors
-            }
+            } catch (error) { }
         }));
+        await new Promise(r => setTimeout(r, 200)); // Rate limit pause
     }
 
-    console.log(`✅ Found ${signals.length} Short Reversal signals`);
-    return signals.sort((a, b) => b.exhaustionCandle.movePct - a.exhaustionCandle.movePct);
+    // Sort by setup quality (Confirmed first)
+    return signals.sort((a, b) => {
+        if (a.setup === "CONFIRMED" && b.setup !== "CONFIRMED") return -1;
+        if (b.setup === "CONFIRMED" && a.setup !== "CONFIRMED") return 1;
+        return b.metrics.volRatio - a.metrics.volRatio;
+    });
 }
+

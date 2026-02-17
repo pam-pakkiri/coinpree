@@ -1,12 +1,8 @@
-
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { usePathname } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 
-// Simple client-side auth guard
-// In a real app, this should be server-side with NextAuth, but for this simpler request:
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
     const router = useRouter();
     const pathname = usePathname();
@@ -15,10 +11,10 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
     useEffect(() => {
         const auth = localStorage.getItem("coinpree_auth");
+        const publicPages = ["/login", "/signup", "/"];
 
-        // If on login page, don't check auth
-        if (pathname === "/login") {
-            setIsAuthenticated(false);
+        if (publicPages.includes(pathname)) {
+            setIsAuthenticated(auth === "true");
             setIsLoading(false);
             return;
         }
@@ -31,15 +27,17 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         setIsLoading(false);
     }, [pathname, router]);
 
-    // Show nothing while checking (or a minimal spinner) strictly to avoid flash of content
-    if (isLoading) return null;
+    if (isLoading) {
+        return (
+            <div className="min-h-screen bg-black flex items-center justify-center">
+                <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            </div>
+        );
+    }
 
-    // If on login page, render children (the login page itself)
-    if (pathname === "/login") return <>{children}</>;
+    if (!isAuthenticated && !["/login", "/signup", "/"].includes(pathname)) {
+        return null;
+    }
 
-    // If authenticated, render app
-    if (isAuthenticated) return <>{children}</>;
-
-    // Otherwise render nothing (will redirect)
-    return null;
+    return <>{children}</>;
 }

@@ -551,11 +551,11 @@ export async function fetchTopCoins(): Promise<CoinGeckoMarketData[]> {
       const pageData = await response.json();
       allData.push(...pageData);
 
-      // Check if we've reached coins with volume < 100M
+      // Check if we've reached coins with volume < 15M
       // Since API returns sorted by volume desc, we can stop early to save API calls
       const lastCoin = pageData[pageData.length - 1];
-      if (lastCoin && Number(lastCoin.total_volume) < 100000000) {
-        console.log("Stopping fetch: Remaining coins have < $100M volume");
+      if (lastCoin && Number(lastCoin.total_volume) < 15000000) {
+        console.log("Stopping fetch: Remaining coins have < $15M volume");
         break;
       }
 
@@ -567,9 +567,9 @@ export async function fetchTopCoins(): Promise<CoinGeckoMarketData[]> {
 
     // Apply filters
     const filteredData = allData.filter((coin) => {
-      // 0. Volume Filter (> 100M)
+      // 0. Volume Filter (> 15M)
       const vol = Number(coin.total_volume);
-      if (!vol || isNaN(vol) || vol < 100000000) return false;
+      if (!vol || isNaN(vol) || vol < 15000000) return false;
 
       // 1. Exclude Known Stablecoins
       if (STABLECOINS.includes(coin.id)) return false;
@@ -608,13 +608,16 @@ export async function fetchTopCoins(): Promise<CoinGeckoMarketData[]> {
         )
       `);
 
+      const histStmt = db.prepare(`
+        INSERT OR IGNORE INTO price_history (coin_id, price, timestamp)
+        VALUES (?, ?, ?)
+      `);
+
       const insertMany = db.transaction((coins: CoinGeckoMarketData[]) => {
-        // Optional: Clear old data? 
-        // db.prepare('DELETE FROM coins').run(); // Or keep accumulation and rely on REPLACE
-        // Let's keep accumulation but maybe clean up very old records later. 
-        // For now, REPLACE is fine.
+        const timestamp = Math.floor(now / 60000) * 60000; // Round to nearest minute
 
         for (const coin of coins) {
+          // Update core coin data
           stmt.run({
             id: coin.id,
             symbol: coin.symbol,
@@ -642,11 +645,20 @@ export async function fetchTopCoins(): Promise<CoinGeckoMarketData[]> {
             tradeable_on_bybit: coin.tradeable_on_bybit ? 1 : 0,
             updated_at: now
           });
+
+          // Save to history
+          if (coin.current_price) {
+            histStmt.run(coin.id, coin.current_price, timestamp);
+          }
         }
+
+        // Cleanup old history (keep last 24 hours to avoid bloat)
+        const dayAgo = now - (24 * 60 * 60 * 1000);
+        db.prepare('DELETE FROM price_history WHERE timestamp < ?').run(dayAgo);
       });
 
       insertMany(filteredData);
-      console.log(`💾 Saved ${filteredData.length} coins to SQLite DB`);
+      console.log(`💾 Saved ${filteredData.length} coins and 1m price history to SQLite DB`);
 
     } catch (dbError) {
       console.error("❌ Failed to save to DB:", dbError);
@@ -958,10 +970,24 @@ async function processCoinWithOHLC(
 
     // Extract close prices from OHLC data
     // OHLC format: [timestamp, open, high, low, close]
-    const prices = ohlcData.map((candle) => candle[4]); // close price
+    let series = ohlcData.map((candle) => candle[4]); // close price
+
+    // 🚀 ULTRA-FRESH TRADING: Inject absolute latest price from 1-minute snapshot DB
+    // This ensures that even for 1h or 1d timeframes, the signal updates EVERY MINUTE
+    const latestPrice = coin.current_price;
+    const lastOHLCPrice = series[series.length - 1];
+    const lastOHLCTime = ohlcData[ohlcData.length - 1][0];
+    const now = Date.now();
+
+    // If the latest snapshot price is different from last candle or the candle is old,
+    // we append it as the current "live" data point.
+    // This makes the scanner reactive to minute-level moves on ANY timeframe.
+    if (latestPrice && latestPrice !== lastOHLCPrice) {
+      series.push(latestPrice);
+    }
 
     // Filter out invalid prices
-    const validPrices = prices.filter((p) => p && p > 0 && !isNaN(p));
+    const validPrices = series.filter((p) => p && p > 0 && !isNaN(p));
 
     if (validPrices.length < 100) {
       return null;
@@ -981,12 +1007,19 @@ async function processCoinWithOHLC(
     }
 
     // Calculate lookback based on timeframe to cover 24 hours
+    // This defines how far back we look for the "Crossover event"
     let lookback = 288; // Default for 5m (12 * 24)
     if (timeframe === "15m") lookback = 96;
     if (timeframe === "30m") lookback = 48;
     if (timeframe === "1h") lookback = 24;
     if (timeframe === "4h") lookback = 6;
     if (timeframe === "1d") lookback = 2;
+
+    // IMPORTANT: Since we added a "Live" price point, lookback should include index 0 (the new point)
+    // detectCrossover usually looks at index i and i-1. 
+    // If the crossover JUST happened because of the minute-level move, candlesAgo will be 0.
+    lookback += 1;
+
 
     // Detect crossover in last 24h
     const crossover = detectCrossover(ema7Array, ema99Array, lookback);
@@ -1137,7 +1170,10 @@ async function processCoinWithOHLC(
     const formula = `EMA(7)=${ema7Current.toFixed(6)} | EMA(99)=${ema99Current.toFixed(6)} | Gap=${crossoverStrength.toFixed(2)}%${dataSourceTag}${futuresTag}`;
 
     // Get the actual crossover timestamp from the candle where it occurred
-    const crossoverTimestamp = ohlcData[crossover.index][0];
+    // SAFETY: If index is out of bounds (happened on our injected point), use current time
+    const crossoverTimestamp = (crossover.index < ohlcData.length)
+      ? ohlcData[crossover.index][0]
+      : Date.now();
 
     // Create signal object
     const signal: MASignal = {
@@ -1386,10 +1422,11 @@ async function processCoinWithSparkline(
  */
 export async function calculateMACrossovers(
   timeframe: string = "1h",
+  maxCoins: number = 0, // 0 means all
 ): Promise<MASignal[]> {
   try {
     // Check cache first
-    const cacheKey = timeframe;
+    const cacheKey = `${timeframe}_${maxCoins}`;
     const cached = signalsCache.get(cacheKey);
     const now = Date.now();
 
@@ -1400,19 +1437,22 @@ export async function calculateMACrossovers(
 
     console.log(`🔍 Scanning for MA crossovers on ${timeframe} timeframe...`);
 
-    const coins = await fetchTopCoins();
+    let coins = await fetchTopCoins();
 
     if (!coins || coins.length === 0) {
       console.warn("⚠️ No coins fetched from API");
       return [];
     }
 
+    if (maxCoins > 0) {
+      coins = coins.slice(0, maxCoins);
+    }
+
     console.log(
-      `📊 Analyzing ${coins.length} ${IS_PRO ? "futures-grade" : "legitimate"} coins using HYBRID approach (Binance + CoinGecko)...`,
+      `📊 Analyzing ${coins.length} coins using HYBRID approach...`,
     );
 
-    // Process coins in larger batches for speed (PRO supports higher rate limits)
-    // Batch size 50 for Pro (up from 20), 20 for Free
+    // Process coins in larger batches for speed
     const batchSize = IS_PRO ? 50 : 20;
     const results: (MASignal | null)[] = [];
     let processedCount = 0;
